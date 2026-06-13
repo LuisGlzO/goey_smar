@@ -1,0 +1,106 @@
+from datetime import timedelta
+from decimal import Decimal
+
+from django.db import transaction
+from django.utils import timezone
+
+from .models import Alert, MonitorRun, Product, ProductCheck
+from .scraper import scrape_saved_items
+from .telegram import send_product_alert
+
+
+def determine_availability(item):
+    if item.unavailable_message_visible:
+        return ProductCheck.Availability.UNAVAILABLE
+    if item.move_to_cart_visible or item.price is not None:
+        return ProductCheck.Availability.AVAILABLE
+    return ProductCheck.Availability.UNKNOWN
+
+
+def alert_decision(product, check, now=None):
+    now = now or timezone.now()
+    if check.availability != ProductCheck.Availability.AVAILABLE:
+        return False, "not_available"
+    if check.price is None:
+        return False, "price_missing"
+    if check.price > product.max_price:
+        return False, "price_above_target"
+
+    start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    sent_alerts = Alert.objects.filter(product=product, status=Alert.Status.SENT)
+    if sent_alerts.filter(created_at__gte=start_of_day).count() >= product.max_alerts_per_day:
+        return False, "daily_limit"
+
+    previous = ProductCheck.objects.filter(product=product, checked_at__lt=check.checked_at).first()
+    last_sent = sent_alerts.first()
+    if not last_sent:
+        return True, "first_availability"
+    if previous and previous.availability != ProductCheck.Availability.AVAILABLE:
+        return True, "restock"
+
+    previous_sent_price = last_sent.product_check.price
+    if previous_sent_price and check.price < previous_sent_price:
+        drop = ((previous_sent_price - check.price) / previous_sent_price) * Decimal("100")
+        if drop >= product.significant_price_drop_percent:
+            return True, "significant_price_drop"
+
+    if now - last_sent.created_at >= timedelta(minutes=product.cooldown_minutes):
+        return True, "cooldown_elapsed"
+    return False, "cooldown"
+
+
+@transaction.atomic
+def process_item(run, product, item):
+    check = ProductCheck.objects.create(
+        run=run,
+        product=product,
+        availability=determine_availability(item),
+        price=item.price,
+        move_to_cart_visible=item.move_to_cart_visible,
+        unavailable_message_visible=item.unavailable_message_visible,
+        product_url=item.product_url,
+        raw_text=item.raw_text,
+    )
+    should_send, reason = alert_decision(product, check)
+    if not should_send:
+        Alert.objects.create(product=product, product_check=check, status=Alert.Status.SKIPPED, reason=reason)
+        return check
+    try:
+        message_id = send_product_alert(product, check)
+        Alert.objects.create(product=product, product_check=check, status=Alert.Status.SENT, reason=reason, details=message_id)
+    except Exception as exc:
+        Alert.objects.create(product=product, product_check=check, status=Alert.Status.FAILED, reason="telegram_error", details=str(exc))
+    return check
+
+
+def process_missing_product(run, product):
+    check = ProductCheck.objects.create(
+        run=run,
+        product=product,
+        availability=ProductCheck.Availability.UNKNOWN,
+        raw_text="El ASIN activo no apareció entre los elementos visibles.",
+    )
+    Alert.objects.create(product=product, product_check=check, status=Alert.Status.SKIPPED, reason="not_visible")
+
+
+def run_monitor():
+    run = MonitorRun.objects.create()
+    try:
+        items = scrape_saved_items()
+        products = {product.asin: product for product in Product.objects.filter(is_active=True)}
+        for item in items:
+            product = products.pop(item.asin, None)
+            if product:
+                process_item(run, product, item)
+        for product in products.values():
+            process_missing_product(run, product)
+        run.items_seen = len(items)
+        run.status = MonitorRun.Status.SUCCESS
+    except Exception as exc:
+        run.status = MonitorRun.Status.FAILED
+        run.error = str(exc)
+        raise
+    finally:
+        run.finished_at = timezone.now()
+        run.save(update_fields=("items_seen", "status", "error", "finished_at"))
+    return run
