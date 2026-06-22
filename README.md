@@ -46,9 +46,13 @@ Si instala manualmente con `pip install -r requirements.txt`, ejecute también:
 Si el entorno no está activado, use el lanzador incluido:
 
 ```powershell
+.\scripts\manage.ps1 collectstatic --noinput
 .\scripts\manage.ps1 init_amazon_session
 .\scripts\manage.ps1 monitor_saved_items
 ```
+
+El lanzador ejecuta `collectstatic` automáticamente al usar `runserver` si faltan
+los estilos del admin.
 
 ## Verificación
 

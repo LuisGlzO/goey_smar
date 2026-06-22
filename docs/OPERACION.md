@@ -19,6 +19,15 @@ Use Python 3.12 x64 para instalaciones locales en Windows. Si aparece
 ejecute `.\scripts\check-runtime.ps1`. Si persiste, instale Microsoft Visual C++
 Redistributable 2015-2022 x64 y reinstale las dependencias.
 
+Si el admin aparece sin estilos, ejecute:
+
+```powershell
+.\scripts\manage.ps1 collectstatic --noinput
+```
+
+Luego reinicie `runserver`. El lanzador prepara estos archivos automáticamente al
+arrancar `runserver` cuando detecta que faltan.
+
 ## 2. Sesión de Amazon
 
 En una instalación local con interfaz gráfica:
