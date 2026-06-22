@@ -23,3 +23,10 @@ class ScraperParsingTests(SimpleTestCase):
         self.assertTrue(item.unavailable_message_visible)
         self.assertFalse(item.move_to_cart_visible)
 
+    def test_detects_selected_seller_unavailable_message(self):
+        item = item_from_payload({
+            "asin": "B0ABC12345",
+            "href": "/dp/B0ABC12345",
+            "text": "Este producto ya no está disponible del vendedor que has seleccionado.",
+        })
+        self.assertTrue(item.unavailable_message_visible)

@@ -3,7 +3,8 @@ from decimal import Decimal
 from django.test import TestCase
 
 from monitor.models import Alert, MonitorRun, Product, ProductCheck
-from monitor.services import alert_decision, process_missing_product
+from monitor.scraper import ScrapedItem
+from monitor.services import alert_decision, determine_availability, process_missing_product
 
 
 class AlertDecisionTests(TestCase):
@@ -41,3 +42,14 @@ class AlertDecisionTests(TestCase):
         check = ProductCheck.objects.get()
         self.assertEqual(check.availability, ProductCheck.Availability.UNKNOWN)
         self.assertEqual(check.alerts.get().reason, "not_visible")
+
+    def test_move_to_cart_with_price_wins_over_selected_seller_unavailable_message(self):
+        item = ScrapedItem(
+            asin=self.product.asin,
+            price=Decimal("549.00"),
+            move_to_cart_visible=True,
+            unavailable_message_visible=True,
+            product_url="https://www.amazon.com.mx/dp/B0ABC12345",
+            raw_text="Este producto ya no está disponible del vendedor seleccionado. Mover al carrito",
+        )
+        self.assertEqual(determine_availability(item), ProductCheck.Availability.AVAILABLE)

@@ -10,10 +10,10 @@ from .telegram import send_product_alert
 
 
 def determine_availability(item):
-    if item.unavailable_message_visible:
-        return ProductCheck.Availability.UNAVAILABLE
     if item.move_to_cart_visible or item.price is not None:
         return ProductCheck.Availability.AVAILABLE
+    if item.unavailable_message_visible:
+        return ProductCheck.Availability.UNAVAILABLE
     return ProductCheck.Availability.UNKNOWN
 
 

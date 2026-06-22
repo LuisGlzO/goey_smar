@@ -10,6 +10,7 @@ ASIN_RE = re.compile(r"/(?:dp|gp/product)/([A-Z0-9]{10})(?:[/?]|$)", re.IGNORECA
 PRICE_RE = re.compile(r"(?:MXN\s*|\$\s*)([\d.,]+)", re.IGNORECASE)
 UNAVAILABLE_TERMS = (
     "no disponible",
+    "no está disponible",
     "sin stock",
     "agotado",
     "oferta seleccionada ya no está disponible",
@@ -92,16 +93,23 @@ def scrape_saved_items(headless: bool | None = None) -> list[ScrapedItem]:
                 or "sign in" in account_text
             ):
                 raise RuntimeError("La sesión de Amazon no es válida; ejecute init_amazon_session.")
-            saved_items = page.locator("#sc-saved-cart [data-asin]")
-            payloads = saved_items.evaluate_all(
-                """elements => elements.map(element => {
-                    const link = element.querySelector('a[href*="/dp/"], a[href*="/gp/product/"]');
-                    return {
-                        asin: element.getAttribute("data-asin") || "",
-                        href: link ? link.getAttribute("href") : "",
-                        text: element.innerText || ""
-                    };
-                })"""
+            saved_cart = page.locator("#sc-saved-cart")
+            payloads = saved_cart.evaluate(
+                """root => {
+                    const candidates = new Set();
+                    root.querySelectorAll("[data-asin]").forEach(element => candidates.add(element));
+                    root.querySelectorAll('a[href*="/dp/"], a[href*="/gp/product/"]').forEach(link => {
+                        candidates.add(link.closest("[data-asin]") || link.closest(".sc-list-item") || link.closest("li") || link.parentElement);
+                    });
+                    return Array.from(candidates).map(element => {
+                        const link = element.querySelector('a[href*="/dp/"], a[href*="/gp/product/"]');
+                        return {
+                            asin: element.getAttribute("data-asin") || "",
+                            href: link ? link.getAttribute("href") : "",
+                            text: element.innerText || ""
+                        };
+                    });
+                }"""
             )
             by_asin = {}
             for payload in payloads:
