@@ -19,6 +19,22 @@ UNAVAILABLE_TERMS = (
 )
 MOVE_TO_CART_TERMS = ("mover al carrito", "move to cart")
 
+SAVED_ITEM_PAYLOADS_JS = """root => {
+    const candidates = new Set();
+    root.querySelectorAll("[data-asin]").forEach(element => candidates.add(element));
+    root.querySelectorAll('a[href*="/dp/"], a[href*="/gp/product/"]').forEach(link => {
+        candidates.add(link.closest("[data-asin]") || link.closest(".sc-list-item") || link.closest("li") || link.parentElement);
+    });
+    return Array.from(candidates).map(element => {
+        const link = element.querySelector('a[href*="/dp/"], a[href*="/gp/product/"]');
+        return {
+            asin: element.getAttribute("data-asin") || "",
+            href: link ? link.getAttribute("href") : "",
+            text: element.innerText || ""
+        };
+    });
+}"""
+
 
 @dataclass(frozen=True)
 class ScrapedItem:
@@ -72,6 +88,43 @@ def item_from_payload(payload: dict) -> ScrapedItem | None:
     )
 
 
+def collect_saved_item_payloads(page) -> list[dict]:
+    saved_cart = page.locator("#sc-saved-cart")
+    saved_cart.wait_for(state="attached", timeout=10000)
+    saved_cart.scroll_into_view_if_needed()
+    page.wait_for_timeout(800)
+
+    payloads_by_key = {}
+    previous_count = 0
+    previous_scroll_y = -1
+    stable_iterations = 0
+
+    for _ in range(30):
+        for payload in saved_cart.evaluate(SAVED_ITEM_PAYLOADS_JS):
+            key = payload.get("asin") or payload.get("href")
+            if key:
+                current = payloads_by_key.get(key)
+                if not current or len(payload.get("text") or "") > len(current.get("text") or ""):
+                    payloads_by_key[key] = payload
+
+        page.evaluate("window.scrollBy(0, Math.max(600, Math.floor(window.innerHeight * 0.8)))")
+        page.wait_for_timeout(700)
+
+        scroll_y = page.evaluate("window.scrollY")
+        current_count = len(payloads_by_key)
+        if current_count == previous_count and scroll_y == previous_scroll_y:
+            stable_iterations += 1
+        else:
+            stable_iterations = 0
+        if stable_iterations >= 2:
+            break
+        previous_count = current_count
+        previous_scroll_y = scroll_y
+
+    saved_cart.scroll_into_view_if_needed()
+    return list(payloads_by_key.values())
+
+
 def scrape_saved_items(headless: bool | None = None) -> list[ScrapedItem]:
     headless = settings.AMAZON_HEADLESS if headless is None else headless
     with sync_playwright() as playwright:
@@ -93,24 +146,7 @@ def scrape_saved_items(headless: bool | None = None) -> list[ScrapedItem]:
                 or "sign in" in account_text
             ):
                 raise RuntimeError("La sesión de Amazon no es válida; ejecute init_amazon_session.")
-            saved_cart = page.locator("#sc-saved-cart")
-            payloads = saved_cart.evaluate(
-                """root => {
-                    const candidates = new Set();
-                    root.querySelectorAll("[data-asin]").forEach(element => candidates.add(element));
-                    root.querySelectorAll('a[href*="/dp/"], a[href*="/gp/product/"]').forEach(link => {
-                        candidates.add(link.closest("[data-asin]") || link.closest(".sc-list-item") || link.closest("li") || link.parentElement);
-                    });
-                    return Array.from(candidates).map(element => {
-                        const link = element.querySelector('a[href*="/dp/"], a[href*="/gp/product/"]');
-                        return {
-                            asin: element.getAttribute("data-asin") || "",
-                            href: link ? link.getAttribute("href") : "",
-                            text: element.innerText || ""
-                        };
-                    });
-                }"""
-            )
+            payloads = collect_saved_item_payloads(page)
             by_asin = {}
             for payload in payloads:
                 item = item_from_payload(payload)
