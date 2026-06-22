@@ -20,7 +20,9 @@ Beat localmente o preparar un despliegue completamente contenerizado.
 
 ## Entorno local
 
-Requiere Python 3.12+, PostgreSQL y Redis. Al ejecutar los servicios mediante
+Requiere Python 3.12 x64, PostgreSQL y Redis. Python 3.12 es el runtime
+recomendado para evitar problemas binarios con Playwright/greenlet en Windows.
+Al ejecutar los servicios mediante
 Docker, PostgreSQL queda disponible en `localhost:5433` y Redis en
 `localhost:6379`:
 
@@ -33,6 +35,13 @@ python manage.py runserver
 ```
 
 Para desarrollo o pruebas sin PostgreSQL, ejecute con `USE_SQLITE=true`.
+
+Si instala manualmente con `pip install -r requirements.txt`, ejecute también:
+
+```powershell
+.\goey_smar_env\Scripts\playwright.exe install chromium
+.\scripts\check-runtime.ps1
+```
 
 Si el entorno no está activado, use el lanzador incluido:
 

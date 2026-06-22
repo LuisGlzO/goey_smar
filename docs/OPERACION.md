@@ -14,6 +14,11 @@ Copie `.env.example` a `.env`. Configure como mínimo:
 El bot de Telegram debe ser administrador del canal privado de pruebas. Para un
 canal, `TELEGRAM_CHAT_ID` suele tener formato `-100...`.
 
+Use Python 3.12 x64 para instalaciones locales en Windows. Si aparece
+`DLL load failed while importing _greenlet`, recree el entorno con Python 3.12 y
+ejecute `.\scripts\check-runtime.ps1`. Si persiste, instale Microsoft Visual C++
+Redistributable 2015-2022 x64 y reinstale las dependencias.
+
 ## 2. Sesión de Amazon
 
 En una instalación local con interfaz gráfica:
