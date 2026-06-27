@@ -4,7 +4,7 @@ from decimal import Decimal
 from django.db import transaction
 from django.utils import timezone
 
-from .models import Alert, MonitorRun, Product, ProductCheck
+from .models import Alert, MonitorRun, MonitorSettings, Product, ProductCheck
 from .scraper import scrape_saved_items
 from .telegram import send_product_alert
 
@@ -15,6 +15,17 @@ def determine_availability(item):
     if item.unavailable_message_visible:
         return ProductCheck.Availability.UNAVAILABLE
     return ProductCheck.Availability.UNKNOWN
+
+
+def monitor_pause_reason(settings, now=None):
+    now = timezone.localtime(now or timezone.now())
+    if settings.is_active_at(now.time()):
+        return ""
+    if not settings.enabled:
+        return "monitor_disabled"
+    if settings.active_from and settings.active_until:
+        return f"outside_active_window:{settings.active_from.strftime('%H:%M')}-{settings.active_until.strftime('%H:%M')}"
+    return "outside_active_window"
 
 
 def alert_decision(product, check, now=None):
@@ -86,6 +97,13 @@ def process_missing_product(run, product):
 def run_monitor():
     run = MonitorRun.objects.create()
     try:
+        settings = MonitorSettings.load()
+        pause_reason = monitor_pause_reason(settings)
+        if pause_reason:
+            run.status = MonitorRun.Status.SKIPPED
+            run.error = pause_reason
+            return run
+
         items = scrape_saved_items()
         products = {product.asin: product for product in Product.objects.filter(is_active=True)}
         for item in items:

@@ -34,11 +34,54 @@ class Product(models.Model):
         super().save(*args, **kwargs)
 
 
+class MonitorSettings(models.Model):
+    enabled = models.BooleanField(default=True)
+    active_from = models.TimeField(
+        null=True,
+        blank=True,
+        help_text="Hora local desde la que se permite monitorear. Vacio significa sin limite.",
+    )
+    active_until = models.TimeField(
+        null=True,
+        blank=True,
+        help_text="Hora local hasta la que se permite monitorear. Vacio significa sin limite.",
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Configuracion del monitor"
+        verbose_name_plural = "Configuracion del monitor"
+
+    def __str__(self):
+        return "Configuracion del monitor"
+
+    def save(self, *args, **kwargs):
+        self.pk = 1
+        super().save(*args, **kwargs)
+
+    @classmethod
+    def load(cls):
+        settings, _ = cls.objects.get_or_create(pk=1)
+        return settings
+
+    def is_active_at(self, current_time):
+        if not self.enabled:
+            return False
+        if not self.active_from or not self.active_until:
+            return True
+        if self.active_from == self.active_until:
+            return True
+        if self.active_from < self.active_until:
+            return self.active_from <= current_time < self.active_until
+        return current_time >= self.active_from or current_time < self.active_until
+
+
 class MonitorRun(models.Model):
     class Status(models.TextChoices):
         RUNNING = "running", "En ejecución"
         SUCCESS = "success", "Exitoso"
         FAILED = "failed", "Fallido"
+        SKIPPED = "skipped", "Omitido"
 
     started_at = models.DateTimeField(auto_now_add=True)
     finished_at = models.DateTimeField(null=True, blank=True)

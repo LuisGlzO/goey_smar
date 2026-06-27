@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Alert, MonitorRun, Product, ProductCheck
+from .models import Alert, MonitorRun, MonitorSettings, Product, ProductCheck
 
 
 @admin.register(Product)
@@ -30,3 +30,16 @@ class MonitorRunAdmin(admin.ModelAdmin):
     list_display = ("started_at", "finished_at", "status", "items_seen")
     list_filter = ("status",)
     readonly_fields = ("started_at", "finished_at", "status", "items_seen", "error")
+
+
+@admin.register(MonitorSettings)
+class MonitorSettingsAdmin(admin.ModelAdmin):
+    list_display = ("enabled", "active_from", "active_until", "updated_at")
+    fields = ("enabled", "active_from", "active_until", "updated_at")
+    readonly_fields = ("updated_at",)
+
+    def has_add_permission(self, request):
+        return not MonitorSettings.objects.exists()
+
+    def has_delete_permission(self, request, obj=None):
+        return False

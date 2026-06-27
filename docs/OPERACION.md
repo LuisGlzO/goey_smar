@@ -109,6 +109,20 @@ En la segunda ejecute el programador:
 Celery Beat agenda una revisión según `MONITOR_INTERVAL_SECONDS`; Redis entrega
 la tarea y el worker ejecuta Playwright, registra resultados y envía Telegram.
 
+### Pausa por horario
+
+Desde Django Admin abra `Configuracion del monitor`. Ahi puede:
+
+- desactivar completamente el monitoreo con `enabled`;
+- definir `active_from` y `active_until` para permitir revisiones solo en una
+  ventana horaria local.
+
+Si ambas horas estan vacias, el monitor queda activo todo el dia. Si la ventana
+cruza medianoche, por ejemplo `23:00` a `07:00`, se interpreta como horario
+nocturno. Fuera del horario permitido Celery Beat puede seguir disparando la
+tarea, pero la ejecucion queda registrada como `Omitido` y no abre Amazon ni
+Playwright.
+
 ## 7. Docker Compose
 
 `docker-compose.yml` describe cinco servicios relacionados:

@@ -1,10 +1,12 @@
+from datetime import time
 from decimal import Decimal
+from unittest.mock import patch
 
 from django.test import TestCase
 
-from monitor.models import Alert, MonitorRun, Product, ProductCheck
+from monitor.models import Alert, MonitorRun, MonitorSettings, Product, ProductCheck
 from monitor.scraper import ScrapedItem
-from monitor.services import alert_decision, determine_availability, process_missing_product
+from monitor.services import alert_decision, determine_availability, process_missing_product, run_monitor
 
 
 class AlertDecisionTests(TestCase):
@@ -53,3 +55,28 @@ class AlertDecisionTests(TestCase):
             raw_text="Este producto ya no está disponible del vendedor seleccionado. Mover al carrito",
         )
         self.assertEqual(determine_availability(item), ProductCheck.Availability.AVAILABLE)
+
+
+class MonitorSettingsTests(TestCase):
+    def test_empty_window_is_always_active_when_enabled(self):
+        settings = MonitorSettings(enabled=True)
+        self.assertTrue(settings.is_active_at(time(2, 0)))
+
+    def test_standard_window_only_allows_inside_hours(self):
+        settings = MonitorSettings(enabled=True, active_from=time(7, 0), active_until=time(23, 0))
+        self.assertTrue(settings.is_active_at(time(12, 0)))
+        self.assertFalse(settings.is_active_at(time(23, 30)))
+
+    def test_overnight_window_crosses_midnight(self):
+        settings = MonitorSettings(enabled=True, active_from=time(23, 0), active_until=time(7, 0))
+        self.assertTrue(settings.is_active_at(time(23, 30)))
+        self.assertTrue(settings.is_active_at(time(2, 0)))
+        self.assertFalse(settings.is_active_at(time(12, 0)))
+
+    @patch("monitor.services.scrape_saved_items")
+    def test_disabled_monitor_skips_without_opening_amazon(self, scrape_saved_items):
+        MonitorSettings.objects.create(enabled=False)
+        run = run_monitor()
+        self.assertEqual(run.status, MonitorRun.Status.SKIPPED)
+        self.assertEqual(run.error, "monitor_disabled")
+        scrape_saved_items.assert_not_called()
