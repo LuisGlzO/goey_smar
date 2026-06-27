@@ -2,7 +2,7 @@ from decimal import Decimal
 
 from django.test import SimpleTestCase
 
-from monitor.scraper import extract_asin, item_from_payload, parse_price
+from monitor.scraper import ScrapedItem, extract_asin, item_from_payload, item_score, parse_price
 
 
 class ScraperParsingTests(SimpleTestCase):
@@ -30,3 +30,33 @@ class ScraperParsingTests(SimpleTestCase):
             "text": "Este producto ya no está disponible del vendedor que has seleccionado.",
         })
         self.assertTrue(item.unavailable_message_visible)
+
+    def test_item_keeps_source(self):
+        item = item_from_payload({
+            "asin": "B0ABC12345",
+            "href": "/dp/B0ABC12345",
+            "text": "Producto $549.00",
+            "source": "cart",
+        })
+        self.assertEqual(item.source, "cart")
+
+    def test_cart_item_wins_over_saved_duplicate(self):
+        cart_item = ScrapedItem(
+            asin="B0ABC12345",
+            price=Decimal("549.00"),
+            move_to_cart_visible=False,
+            unavailable_message_visible=False,
+            product_url="https://www.amazon.com.mx/dp/B0ABC12345",
+            raw_text="Carrito",
+            source="cart",
+        )
+        saved_item = ScrapedItem(
+            asin="B0ABC12345",
+            price=Decimal("549.00"),
+            move_to_cart_visible=True,
+            unavailable_message_visible=False,
+            product_url="https://www.amazon.com.mx/dp/B0ABC12345",
+            raw_text="Guardado para mas tarde con mas texto",
+            source="saved",
+        )
+        self.assertGreater(item_score(cart_item), item_score(saved_item))

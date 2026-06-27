@@ -19,7 +19,7 @@ UNAVAILABLE_TERMS = (
 )
 MOVE_TO_CART_TERMS = ("mover al carrito", "move to cart")
 
-SAVED_ITEM_PAYLOADS_JS = """root => {
+ITEM_PAYLOADS_JS = """root => {
     const candidates = new Set();
     root.querySelectorAll("[data-asin]").forEach(element => candidates.add(element));
     root.querySelectorAll('a[href*="/dp/"], a[href*="/gp/product/"]').forEach(link => {
@@ -44,6 +44,7 @@ class ScrapedItem:
     unavailable_message_visible: bool
     product_url: str
     raw_text: str
+    source: str = "unknown"
 
 
 def extract_asin(href: str, data_asin: str = "") -> str | None:
@@ -85,13 +86,16 @@ def item_from_payload(payload: dict) -> ScrapedItem | None:
         unavailable_message_visible=any(term in lowered for term in UNAVAILABLE_TERMS),
         product_url=urljoin("https://www.amazon.com.mx", href) if href else f"https://www.amazon.com.mx/dp/{asin}",
         raw_text=text[:4000],
+        source=payload.get("source") or "unknown",
     )
 
 
-def collect_saved_item_payloads(page) -> list[dict]:
-    saved_cart = page.locator("#sc-saved-cart")
-    saved_cart.wait_for(state="attached", timeout=10000)
-    saved_cart.scroll_into_view_if_needed()
+def collect_item_payloads(page, selector: str, source: str, scroll: bool = False) -> list[dict]:
+    section = page.locator(selector)
+    if not section.count():
+        return []
+    section.wait_for(state="attached", timeout=10000)
+    section.scroll_into_view_if_needed()
     page.wait_for_timeout(800)
 
     payloads_by_key = {}
@@ -99,13 +103,18 @@ def collect_saved_item_payloads(page) -> list[dict]:
     previous_scroll_y = -1
     stable_iterations = 0
 
-    for _ in range(30):
-        for payload in saved_cart.evaluate(SAVED_ITEM_PAYLOADS_JS):
+    iterations = 30 if scroll else 1
+    for _ in range(iterations):
+        for payload in section.evaluate(ITEM_PAYLOADS_JS):
+            payload["source"] = source
             key = payload.get("asin") or payload.get("href")
             if key:
                 current = payloads_by_key.get(key)
                 if not current or len(payload.get("text") or "") > len(current.get("text") or ""):
                     payloads_by_key[key] = payload
+
+        if not scroll:
+            break
 
         page.evaluate("window.scrollBy(0, Math.max(600, Math.floor(window.innerHeight * 0.8)))")
         page.wait_for_timeout(700)
@@ -121,8 +130,25 @@ def collect_saved_item_payloads(page) -> list[dict]:
         previous_count = current_count
         previous_scroll_y = scroll_y
 
-    saved_cart.scroll_into_view_if_needed()
+    section.scroll_into_view_if_needed()
     return list(payloads_by_key.values())
+
+
+def collect_cart_item_payloads(page) -> list[dict]:
+    return collect_item_payloads(page, "#sc-active-cart", "cart", scroll=False)
+
+
+def collect_saved_item_payloads(page) -> list[dict]:
+    return collect_item_payloads(page, "#sc-saved-cart", "saved", scroll=True)
+
+
+def item_score(item: ScrapedItem) -> tuple:
+    return (
+        1 if item.source == "cart" else 0,
+        1 if item.price is not None else 0,
+        1 if item.move_to_cart_visible else 0,
+        len(item.raw_text),
+    )
 
 
 def scrape_saved_items(headless: bool | None = None) -> list[ScrapedItem]:
@@ -146,11 +172,11 @@ def scrape_saved_items(headless: bool | None = None) -> list[ScrapedItem]:
                 or "sign in" in account_text
             ):
                 raise RuntimeError("La sesión de Amazon no es válida; ejecute init_amazon_session.")
-            payloads = collect_saved_item_payloads(page)
+            payloads = collect_cart_item_payloads(page) + collect_saved_item_payloads(page)
             by_asin = {}
             for payload in payloads:
                 item = item_from_payload(payload)
-                if item and (item.asin not in by_asin or len(item.raw_text) > len(by_asin[item.asin].raw_text)):
+                if item and (item.asin not in by_asin or item_score(item) > item_score(by_asin[item.asin])):
                     by_asin[item.asin] = item
             return list(by_asin.values())
         finally:

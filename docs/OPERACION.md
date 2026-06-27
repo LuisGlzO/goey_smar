@@ -81,8 +81,9 @@ Revise `Monitor runs`, `Product checks` y `Alerts` en Django Admin. Los elemento
 sin un ASIN activo se leen, pero no generan verificaciones ni alertas. Los ASIN
 activos que no aparezcan en la página se registran con estado desconocido.
 
-El monitor analiza únicamente los elementos dentro de la sección Guardado para
-más tarde. Los productos del carrito activo no generan alertas.
+El monitor analiza los productos del carrito activo y los elementos dentro de la
+sección Guardado para más tarde. El diagnóstico indica `source=cart` o
+`source=saved` para saber de dónde salió cada lectura.
 
 ## 6. Ejecución automática local
 
