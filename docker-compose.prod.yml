@@ -1,4 +1,18 @@
 services:
+  proxy:
+    image: caddy:2-alpine
+    env_file: .env
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - web
+    restart: unless-stopped
+
   db:
     image: postgres:16-alpine
     environment:
@@ -29,8 +43,8 @@ services:
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/0
     command: sh -c "python manage.py migrate && python manage.py collectstatic --noinput && gunicorn config.wsgi:application --bind 0.0.0.0:8000"
-    ports:
-      - "${WEB_PORT:-8000}:8000"
+    expose:
+      - "8000"
     depends_on:
       db:
         condition: service_healthy
@@ -74,6 +88,8 @@ services:
     restart: unless-stopped
 
 volumes:
+  caddy_data:
+  caddy_config:
   postgres_data:
   redis_data:
   amazon_profile:
