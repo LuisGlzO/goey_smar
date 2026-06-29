@@ -1,12 +1,21 @@
 from datetime import time
 from decimal import Decimal
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
-from django.test import TestCase
+from django.core import mail
+from django.test import TestCase, override_settings
 
+from monitor.email import send_monitor_failure_email
 from monitor.models import Alert, MonitorRun, MonitorSettings, Product, ProductCheck
 from monitor.scraper import ScrapedItem
-from monitor.services import alert_decision, determine_availability, process_missing_product, run_monitor
+from monitor.services import (
+    alert_decision,
+    determine_availability,
+    process_missing_product,
+    run_monitor,
+    send_monitor_failure_notifications,
+)
+from monitor.telegram import send_monitor_failure_alert
 
 
 class AlertDecisionTests(TestCase):
@@ -80,3 +89,109 @@ class MonitorSettingsTests(TestCase):
         self.assertEqual(run.status, MonitorRun.Status.SKIPPED)
         self.assertEqual(run.error, "monitor_disabled")
         scrape_saved_items.assert_not_called()
+
+    @patch("monitor.services.send_monitor_failure_notifications")
+    @patch("monitor.services.scrape_saved_items", side_effect=RuntimeError("captcha requerido"))
+    def test_failed_monitor_sends_failure_notification(self, scrape_saved_items, send_failure_notifications):
+        with self.assertRaisesMessage(RuntimeError, "captcha requerido"):
+            run_monitor()
+
+        run = MonitorRun.objects.get()
+        self.assertEqual(run.status, MonitorRun.Status.FAILED)
+        self.assertEqual(run.error, "captcha requerido")
+        self.assertIsNotNone(run.finished_at)
+        send_failure_notifications.assert_called_once_with(run, ANY)
+
+    @patch("monitor.services.send_monitor_failure_email", side_effect=RuntimeError("smtp caido"))
+    @patch("monitor.services.send_monitor_failure_alert", side_effect=RuntimeError("telegram caido"))
+    def test_failure_notifier_errors_are_logged(self, send_failure_alert, send_failure_email):
+        run = MonitorRun.objects.create(status=MonitorRun.Status.FAILED, error="sesion invalida")
+
+        with self.assertLogs("monitor.services", level="ERROR"):
+            send_monitor_failure_notifications(run, RuntimeError("sesion invalida"))
+
+        send_failure_email.assert_called_once()
+        send_failure_alert.assert_called_once()
+
+    @patch("monitor.services.send_monitor_failure_email", return_value=1)
+    @patch("monitor.services.send_monitor_failure_alert")
+    def test_failure_notifier_stops_after_successful_email(self, send_failure_alert, send_failure_email):
+        run = MonitorRun.objects.create(status=MonitorRun.Status.FAILED, error="captcha requerido")
+
+        send_monitor_failure_notifications(run, RuntimeError("captcha requerido"))
+
+        send_failure_email.assert_called_once()
+        send_failure_alert.assert_not_called()
+
+    @patch("monitor.services.send_monitor_failure_email", return_value=0)
+    @patch("monitor.services.send_monitor_failure_alert")
+    def test_failure_notifier_uses_telegram_when_email_has_no_recipients(self, send_failure_alert, send_failure_email):
+        run = MonitorRun.objects.create(status=MonitorRun.Status.FAILED, error="captcha requerido")
+
+        send_monitor_failure_notifications(run, RuntimeError("captcha requerido"))
+
+        send_failure_email.assert_called_once()
+        send_failure_alert.assert_called_once()
+
+    @patch("monitor.services.send_monitor_failure_email", side_effect=RuntimeError("smtp caido"))
+    @patch("monitor.services.send_monitor_failure_alert")
+    def test_failure_notifier_uses_telegram_when_email_fails(self, send_failure_alert, send_failure_email):
+        run = MonitorRun.objects.create(status=MonitorRun.Status.FAILED, error="captcha requerido")
+
+        with self.assertLogs("monitor.services", level="ERROR"):
+            send_monitor_failure_notifications(run, RuntimeError("captcha requerido"))
+
+        send_failure_email.assert_called_once()
+        send_failure_alert.assert_called_once()
+
+
+class MonitorFailureEmailTests(TestCase):
+    @override_settings(
+        EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+        DEFAULT_FROM_EMAIL="monitor@example.com",
+        MONITOR_FAILURE_EMAIL_RECIPIENTS=["ops@example.com"],
+        MONITOR_FAILURE_EMAIL_SUBJECT_PREFIX="[Pruebas]",
+    )
+    def test_send_monitor_failure_email_uses_configured_recipients(self):
+        run = MonitorRun.objects.create(status=MonitorRun.Status.FAILED, error="captcha requerido")
+
+        sent = send_monitor_failure_email(run, RuntimeError("captcha requerido"))
+
+        self.assertEqual(sent, 1)
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].to, ["ops@example.com"])
+        self.assertIn("[Pruebas] Scraper fallido", mail.outbox[0].subject)
+        self.assertIn("captcha requerido", mail.outbox[0].body)
+
+    @override_settings(MONITOR_FAILURE_EMAIL_RECIPIENTS=[])
+    def test_send_monitor_failure_email_is_noop_without_recipients(self):
+        run = MonitorRun.objects.create(status=MonitorRun.Status.FAILED, error="captcha requerido")
+
+        sent = send_monitor_failure_email(run, RuntimeError("captcha requerido"))
+
+        self.assertEqual(sent, 0)
+
+
+class MonitorFailureTelegramTests(TestCase):
+    @override_settings(TELEGRAM_BOT_TOKEN="token", TELEGRAM_ERROR_CHAT_ID="-100123")
+    @patch("monitor.telegram.requests.post")
+    def test_send_monitor_failure_alert_uses_error_channel(self, post):
+        post.return_value.json.return_value = {"result": {"message_id": 77}}
+        run = MonitorRun.objects.create(status=MonitorRun.Status.FAILED, error="captcha requerido")
+
+        message_id = send_monitor_failure_alert(run, RuntimeError("captcha requerido"))
+
+        self.assertEqual(message_id, "77")
+        post.assert_called_once()
+        payload = post.call_args.kwargs["json"]
+        self.assertEqual(payload["chat_id"], "-100123")
+        self.assertIn("Scraper fallido", payload["text"])
+        self.assertIn("captcha requerido", payload["text"])
+        self.assertTrue(payload["disable_web_page_preview"])
+
+    @override_settings(TELEGRAM_BOT_TOKEN="token", TELEGRAM_ERROR_CHAT_ID="")
+    def test_send_monitor_failure_alert_requires_error_channel(self):
+        run = MonitorRun.objects.create(status=MonitorRun.Status.FAILED, error="captcha requerido")
+
+        with self.assertRaisesMessage(RuntimeError, "TELEGRAM_ERROR_CHAT_ID"):
+            send_monitor_failure_alert(run, RuntimeError("captcha requerido"))

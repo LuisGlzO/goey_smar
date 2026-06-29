@@ -1,12 +1,32 @@
+import logging
 from datetime import timedelta
 from decimal import Decimal
 
 from django.db import transaction
 from django.utils import timezone
 
+from .email import send_monitor_failure_email
 from .models import Alert, MonitorRun, MonitorSettings, Product, ProductCheck
 from .scraper import scrape_saved_items
-from .telegram import send_product_alert
+from .telegram import send_monitor_failure_alert, send_product_alert
+
+logger = logging.getLogger(__name__)
+
+
+def send_monitor_failure_notifications(run, exc):
+    email_sent = False
+    try:
+        email_sent = send_monitor_failure_email(run, exc) > 0
+    except Exception:
+        logger.exception("No se pudo enviar el email de fallo del monitor.")
+
+    if email_sent:
+        return
+
+    try:
+        send_monitor_failure_alert(run, exc)
+    except Exception:
+        logger.exception("No se pudo enviar la alerta de fallo del monitor por Telegram.")
 
 
 def determine_availability(item):
@@ -117,8 +137,12 @@ def run_monitor():
     except Exception as exc:
         run.status = MonitorRun.Status.FAILED
         run.error = str(exc)
-        raise
-    finally:
         run.finished_at = timezone.now()
         run.save(update_fields=("items_seen", "status", "error", "finished_at"))
+        send_monitor_failure_notifications(run, exc)
+        raise
+    finally:
+        if run.finished_at is None:
+            run.finished_at = timezone.now()
+            run.save(update_fields=("items_seen", "status", "error", "finished_at"))
     return run

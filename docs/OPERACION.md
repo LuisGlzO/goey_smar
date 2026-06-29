@@ -8,11 +8,34 @@ Copie `.env.example` a `.env`. Configure como mínimo:
 - `POSTGRES_PASSWORD`
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_CHAT_ID`
+- `TELEGRAM_ERROR_CHAT_ID`, canal alterno para avisos tecnicos si no se usa email
 - `AMAZON_ASSOCIATE_TAG`, identificador de seguimiento del programa de afiliados
 - `AMAZON_SAVED_ITEMS_URL`, si la cuenta usa otro dominio de Amazon
+- `MONITOR_FAILURE_EMAIL_RECIPIENTS`, correos que recibiran aviso si falla el scraper
 
 El bot de Telegram debe ser administrador del canal privado de pruebas. Para un
-canal, `TELEGRAM_CHAT_ID` suele tener formato `-100...`.
+canal, `TELEGRAM_CHAT_ID` suele tener formato `-100...`. Use
+`TELEGRAM_ERROR_CHAT_ID` para separar alertas tecnicas de las alertas normales
+de productos; puede ser otro canal privado administrado por el mismo bot.
+
+Para avisos por Gmail configure SMTP con una contrasena de aplicacion:
+
+```env
+EMAIL_HOST=smtp.gmail.com
+EMAIL_PORT=587
+EMAIL_USE_TLS=true
+EMAIL_HOST_USER=tu-correo@gmail.com
+EMAIL_HOST_PASSWORD=tu-contrasena-de-aplicacion
+DEFAULT_FROM_EMAIL=tu-correo@gmail.com
+MONITOR_FAILURE_EMAIL_RECIPIENTS=operaciones@example.com
+```
+
+Si `MONITOR_FAILURE_EMAIL_RECIPIENTS` queda vacio, los fallos se envian por
+Telegram a `TELEGRAM_ERROR_CHAT_ID`. Si el correo esta configurado pero falla,
+tambien se intenta ese canal de Telegram como fallback. Sin email ni
+`TELEGRAM_ERROR_CHAT_ID`, el fallo queda registrado en `Monitor runs` y en logs.
+El aviso se dispara ante cualquier excepcion de la ejecucion, incluyendo sesion
+invalida, CAPTCHA o login requerido.
 
 Use Python 3.12 x64 para instalaciones locales en Windows. Si aparece
 `DLL load failed while importing _greenlet`, recree el entorno con Python 3.12 y

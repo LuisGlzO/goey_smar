@@ -98,3 +98,19 @@ AMAZON_HEADLESS = os.getenv("AMAZON_HEADLESS", "true").lower() == "true"
 AMAZON_TIMEOUT_MS = int(os.getenv("AMAZON_TIMEOUT_MS", "45000"))
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+TELEGRAM_ERROR_CHAT_ID = os.getenv("TELEGRAM_ERROR_CHAT_ID", "")
+
+EMAIL_BACKEND = os.getenv("EMAIL_BACKEND", "django.core.mail.backends.smtp.EmailBackend")
+EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.gmail.com")
+EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
+EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "true").lower() == "true"
+EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
+DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", EMAIL_HOST_USER or "webmaster@localhost")
+
+MONITOR_FAILURE_EMAIL_RECIPIENTS = [
+    item.strip()
+    for item in os.getenv("MONITOR_FAILURE_EMAIL_RECIPIENTS", "").split(",")
+    if item.strip()
+]
+MONITOR_FAILURE_EMAIL_SUBJECT_PREFIX = os.getenv("MONITOR_FAILURE_EMAIL_SUBJECT_PREFIX", "[Goey SMAR]")
