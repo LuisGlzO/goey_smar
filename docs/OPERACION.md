@@ -92,6 +92,44 @@ Las alertas generarán enlaces canónicos con el formato
 URL afiliada específica en Django Admin, esa URL tendrá prioridad. Sin ninguna
 de estas configuraciones, se enviará el enlace normal detectado en Amazon.
 
+### Creators API para imagen y titulo
+
+Para que la alerta de producto use la imagen principal y el titulo oficial de
+Amazon, configure las credenciales de Creators API:
+
+```env
+AMAZON_CREATORS_API_CLIENT_ID=...
+AMAZON_CREATORS_API_CLIENT_SECRET=...
+AMAZON_CREATORS_API_CREDENTIAL_VERSION=3
+AMAZON_CREATORS_API_MARKETPLACE=www.amazon.com.mx
+AMAZON_CREATORS_API_PARTNER_TAG=goeygeeks2023-20
+AMAZON_CREATORS_API_LANGUAGES=es_MX
+AMAZON_CREATORS_API_TIMEOUT_SECONDS=5
+```
+
+Con credenciales v2.x use la version regional NA para Mexico, por ejemplo:
+
+```env
+AMAZON_CREATORS_API_CREDENTIAL_VERSION=2.1
+```
+
+Si Creators API no esta configurada, no devuelve el ASIN o falla temporalmente,
+la alerta conserva el nombre local y el enlace afiliado ya configurado. Cuando la
+API devuelve `detailPageURL`, esa URL se usa por default para conservar los
+parametros de atribucion de Amazon; si el producto tiene una URL afiliada manual
+en Django Admin, esa URL manual sigue teniendo prioridad. Cuando la API devuelve
+imagen, Telegram envia la alerta como foto con el formato:
+
+```text
+🚨🚨🚨 Nombre del producto
+
+https://www.amazon.com.mx/dp/ASIN?tag=...
+```
+
+La consulta a Creators API solo ocurre cuando una alerta se va a enviar. Si la
+API no responde antes de `AMAZON_CREATORS_API_TIMEOUT_SECONDS`, se usa el
+fallback local para no bloquear demasiado la corrida.
+
 ## 5. Validación inicial
 
 Ejecute una revisión manual antes de activar la agenda:
@@ -131,6 +169,9 @@ En la segunda ejecute el programador:
 
 Celery Beat agenda una revisión según `MONITOR_INTERVAL_SECONDS`; Redis entrega
 la tarea y el worker ejecuta Playwright, registra resultados y envía Telegram.
+Las tareas publicadas por Beat expiran segun `MONITOR_TASK_EXPIRES_SECONDS`, por
+lo que si una corrida tarda demasiado no se acumulan revisiones viejas para
+ejecutarse inmediatamente despues.
 
 ### Pausa por horario
 
@@ -145,6 +186,14 @@ cruza medianoche, por ejemplo `23:00` a `07:00`, se interpreta como horario
 nocturno. Fuera del horario permitido Celery Beat puede seguir disparando la
 tarea, pero la ejecucion queda registrada como `Omitido` y no abre Amazon ni
 Playwright.
+
+### Solape de ejecuciones
+
+Si una ejecucion sigue en estado `running` cuando entra otra, la nueva se
+registra como `Omitido` con razon `previous_run_still_running`. Esto evita que
+dos scrapers usen simultaneamente el mismo perfil de Amazon. La variable
+`MONITOR_RUNNING_STALE_MINUTES` define cuanto tiempo se considera valida una
+ejecucion `running` antes de tratarla como stale.
 
 ## 7. Docker Compose
 

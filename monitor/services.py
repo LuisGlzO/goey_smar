@@ -2,6 +2,7 @@ import logging
 from datetime import timedelta
 from decimal import Decimal
 
+from django.conf import settings as django_settings
 from django.db import transaction
 from django.utils import timezone
 
@@ -11,6 +12,22 @@ from .scraper import scrape_saved_items
 from .telegram import send_monitor_failure_alert, send_product_alert
 
 logger = logging.getLogger(__name__)
+
+
+@transaction.atomic
+def start_monitor_run():
+    monitor_settings, _ = MonitorSettings.objects.select_for_update().get_or_create(pk=1)
+    stale_cutoff = timezone.now() - timedelta(minutes=django_settings.MONITOR_RUNNING_STALE_MINUTES)
+    if MonitorRun.objects.filter(status=MonitorRun.Status.RUNNING, started_at__gte=stale_cutoff).exists():
+        return (
+            MonitorRun.objects.create(
+                status=MonitorRun.Status.SKIPPED,
+                finished_at=timezone.now(),
+                error="previous_run_still_running",
+            ),
+            monitor_settings,
+        )
+    return MonitorRun.objects.create(), monitor_settings
 
 
 def send_monitor_failure_notifications(run, exc):
@@ -115,9 +132,10 @@ def process_missing_product(run, product):
 
 
 def run_monitor():
-    run = MonitorRun.objects.create()
+    run, settings = start_monitor_run()
+    if run.status == MonitorRun.Status.SKIPPED and run.error == "previous_run_still_running":
+        return run
     try:
-        settings = MonitorSettings.load()
         pause_reason = monitor_pause_reason(settings)
         if pause_reason:
             run.status = MonitorRun.Status.SKIPPED

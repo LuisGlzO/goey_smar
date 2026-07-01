@@ -83,16 +83,33 @@ CSRF_COOKIE_SECURE = os.getenv("DJANGO_CSRF_COOKIE_SECURE", "false").lower() == 
 
 CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")
 CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", CELERY_BROKER_URL)
+MONITOR_INTERVAL_SECONDS = int(os.getenv("MONITOR_INTERVAL_SECONDS", "120"))
+MONITOR_TASK_EXPIRES_SECONDS = int(os.getenv("MONITOR_TASK_EXPIRES_SECONDS", str(MONITOR_INTERVAL_SECONDS)))
+MONITOR_RUNNING_STALE_MINUTES = int(os.getenv("MONITOR_RUNNING_STALE_MINUTES", "10"))
 CELERY_BEAT_SCHEDULE = {
     "monitor-saved-items": {
         "task": "monitor.tasks.monitor_saved_items",
-        "schedule": int(os.getenv("MONITOR_INTERVAL_SECONDS", "120")),
+        "schedule": MONITOR_INTERVAL_SECONDS,
+        "options": {"expires": MONITOR_TASK_EXPIRES_SECONDS},
     }
 }
 
 AMAZON_SAVED_ITEMS_URL = os.getenv("AMAZON_SAVED_ITEMS_URL", "https://www.amazon.com.mx/gp/cart/view.html")
 AMAZON_BASE_URL = os.getenv("AMAZON_BASE_URL", "https://www.amazon.com.mx")
 AMAZON_ASSOCIATE_TAG = os.getenv("AMAZON_ASSOCIATE_TAG", "")
+AMAZON_CREATORS_API_BASE_URL = os.getenv("AMAZON_CREATORS_API_BASE_URL", "https://creatorsapi.amazon").rstrip("/")
+AMAZON_CREATORS_API_TOKEN_URL = os.getenv("AMAZON_CREATORS_API_TOKEN_URL", "")
+AMAZON_CREATORS_API_CLIENT_ID = os.getenv("AMAZON_CREATORS_API_CLIENT_ID", "")
+AMAZON_CREATORS_API_CLIENT_SECRET = os.getenv("AMAZON_CREATORS_API_CLIENT_SECRET", "")
+AMAZON_CREATORS_API_CREDENTIAL_VERSION = os.getenv("AMAZON_CREATORS_API_CREDENTIAL_VERSION", "3")
+AMAZON_CREATORS_API_MARKETPLACE = os.getenv("AMAZON_CREATORS_API_MARKETPLACE", "www.amazon.com.mx")
+AMAZON_CREATORS_API_PARTNER_TAG = os.getenv("AMAZON_CREATORS_API_PARTNER_TAG", AMAZON_ASSOCIATE_TAG)
+AMAZON_CREATORS_API_LANGUAGES = [
+    item.strip()
+    for item in os.getenv("AMAZON_CREATORS_API_LANGUAGES", "es_MX").split(",")
+    if item.strip()
+]
+AMAZON_CREATORS_API_TIMEOUT_SECONDS = int(os.getenv("AMAZON_CREATORS_API_TIMEOUT_SECONDS", "5"))
 AMAZON_PROFILE_DIR = os.getenv("AMAZON_PROFILE_DIR", str(BASE_DIR / ".amazon-profile"))
 AMAZON_HEADLESS = os.getenv("AMAZON_HEADLESS", "true").lower() == "true"
 AMAZON_TIMEOUT_MS = int(os.getenv("AMAZON_TIMEOUT_MS", "45000"))

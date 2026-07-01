@@ -5,6 +5,7 @@ import requests
 from django.conf import settings
 from django.utils import timezone
 
+from .amazon_creators import safe_get_product_content
 from .links import affiliate_url_for
 
 
@@ -27,17 +28,43 @@ def send_telegram_message(chat_id: str, text: str, disable_web_page_preview: boo
     return str(response.json().get("result", {}).get("message_id", ""))
 
 
+def send_telegram_photo(chat_id: str, photo_url: str, caption: str) -> str:
+    if not settings.TELEGRAM_BOT_TOKEN:
+        raise RuntimeError("TELEGRAM_BOT_TOKEN es obligatorio.")
+    if not chat_id:
+        raise RuntimeError("El chat de Telegram es obligatorio.")
+    image_response = requests.get(photo_url, stream=True, timeout=30)
+    image_response.raise_for_status()
+    response = requests.post(
+        f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}/sendPhoto",
+        data={
+            "chat_id": chat_id,
+            "caption": caption,
+            "parse_mode": "HTML",
+        },
+        files={"photo": image_response.raw},
+        timeout=15,
+    )
+    response.raise_for_status()
+    return str(response.json().get("result", {}).get("message_id", ""))
+
+
 def send_product_alert(product, check) -> str:
     if not settings.TELEGRAM_CHAT_ID:
         raise RuntimeError("TELEGRAM_CHAT_ID es obligatorio.")
-    product_url = affiliate_url_for(product, check.product_url)
-    text = (
-        f"<b>Restock detectado</b>\n"
-        f"{html.escape(product.name)}\n"
-        f"Precio: <b>${check.price:,.2f} MXN</b>\n"
-        f"ASIN: <code>{product.asin}</code>\n"
-        f'<a href="{html.escape(product_url)}">Ver producto</a>'
+    creator_content = safe_get_product_content(product.asin)
+    product_name = creator_content.title if creator_content and creator_content.title else product.name
+    product_url = (
+        product.affiliate_url
+        or (creator_content.detail_page_url if creator_content and creator_content.detail_page_url else "")
+        or affiliate_url_for(product, check.product_url)
     )
+    text = (
+        f"🚨🚨🚨 alerta de {html.escape(product_name)}\n\n"
+        f"{html.escape(product_url)}"
+    )
+    if creator_content and creator_content.image_url:
+        return send_telegram_photo(settings.TELEGRAM_CHAT_ID, creator_content.image_url, text)
     return send_telegram_message(settings.TELEGRAM_CHAT_ID, text)
 
 

@@ -90,6 +90,16 @@ class MonitorSettingsTests(TestCase):
         self.assertEqual(run.error, "monitor_disabled")
         scrape_saved_items.assert_not_called()
 
+    @patch("monitor.services.scrape_saved_items")
+    def test_running_monitor_skips_overlapping_execution(self, scrape_saved_items):
+        MonitorRun.objects.create(status=MonitorRun.Status.RUNNING)
+
+        run = run_monitor()
+
+        self.assertEqual(run.status, MonitorRun.Status.SKIPPED)
+        self.assertEqual(run.error, "previous_run_still_running")
+        scrape_saved_items.assert_not_called()
+
     @patch("monitor.services.send_monitor_failure_notifications")
     @patch("monitor.services.scrape_saved_items", side_effect=RuntimeError("captcha requerido"))
     def test_failed_monitor_sends_failure_notification(self, scrape_saved_items, send_failure_notifications):
