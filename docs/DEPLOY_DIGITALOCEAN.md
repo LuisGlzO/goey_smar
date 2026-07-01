@@ -11,7 +11,8 @@ Prepare:
 - llave SSH registrada en DigitalOcean;
 - repositorio accesible desde el servidor;
 - dominio o subdominio opcional, por ejemplo `smar.cliente.com`;
-- token y chat de Telegram;
+- token y chat de Telegram para productos;
+- token y chat de Telegram para errores tecnicos;
 - cuenta de Amazon que se usara para leer carrito/guardados;
 - una contrasena fuerte para PostgreSQL;
 - una `DJANGO_SECRET_KEY` nueva y larga.
@@ -89,6 +90,8 @@ POSTGRES_PASSWORD=valor-largo-y-secreto
 MONITOR_INTERVAL_SECONDS=60
 TELEGRAM_BOT_TOKEN=...
 TELEGRAM_CHAT_ID=...
+TELEGRAM_ERROR_BOT_TOKEN=...
+TELEGRAM_ERROR_CHAT_ID=...
 ```
 
 El registro DNS tipo `A` del dominio debe apuntar al IP publico del Droplet. Por

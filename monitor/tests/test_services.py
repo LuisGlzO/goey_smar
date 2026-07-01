@@ -208,9 +208,13 @@ class MonitorFailureEmailTests(TestCase):
 
 
 class MonitorFailureTelegramTests(TestCase):
-    @override_settings(TELEGRAM_BOT_TOKEN="token", TELEGRAM_ERROR_CHAT_ID="-100123")
+    @override_settings(
+        TELEGRAM_BOT_TOKEN="product-token",
+        TELEGRAM_ERROR_BOT_TOKEN="error-token",
+        TELEGRAM_ERROR_CHAT_ID="-100123",
+    )
     @patch("monitor.telegram.requests.post")
-    def test_send_monitor_failure_alert_uses_error_channel(self, post):
+    def test_send_monitor_failure_alert_uses_error_bot_and_channel(self, post):
         post.return_value.json.return_value = {"result": {"message_id": 77}}
         run = MonitorRun.objects.create(status=MonitorRun.Status.FAILED, error="captcha requerido")
 
@@ -218,15 +222,23 @@ class MonitorFailureTelegramTests(TestCase):
 
         self.assertEqual(message_id, "77")
         post.assert_called_once()
+        self.assertIn("boterror-token", post.call_args.args[0])
         payload = post.call_args.kwargs["json"]
         self.assertEqual(payload["chat_id"], "-100123")
         self.assertIn("Scraper fallido", payload["text"])
         self.assertIn("captcha requerido", payload["text"])
         self.assertTrue(payload["disable_web_page_preview"])
 
-    @override_settings(TELEGRAM_BOT_TOKEN="token", TELEGRAM_ERROR_CHAT_ID="")
+    @override_settings(TELEGRAM_ERROR_BOT_TOKEN="error-token", TELEGRAM_ERROR_CHAT_ID="")
     def test_send_monitor_failure_alert_requires_error_channel(self):
         run = MonitorRun.objects.create(status=MonitorRun.Status.FAILED, error="captcha requerido")
 
         with self.assertRaisesMessage(RuntimeError, "TELEGRAM_ERROR_CHAT_ID"):
+            send_monitor_failure_alert(run, RuntimeError("captcha requerido"))
+
+    @override_settings(TELEGRAM_ERROR_BOT_TOKEN="", TELEGRAM_ERROR_CHAT_ID="-100123")
+    def test_send_monitor_failure_alert_requires_error_bot_token(self):
+        run = MonitorRun.objects.create(status=MonitorRun.Status.FAILED, error="captcha requerido")
+
+        with self.assertRaisesMessage(RuntimeError, "TELEGRAM_ERROR_BOT_TOKEN"):
             send_monitor_failure_alert(run, RuntimeError("captcha requerido"))

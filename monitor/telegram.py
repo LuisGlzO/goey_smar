@@ -9,13 +9,19 @@ from .amazon_creators import safe_get_product_content
 from .links import affiliate_url_for
 
 
-def send_telegram_message(chat_id: str, text: str, disable_web_page_preview: bool = False) -> str:
-    if not settings.TELEGRAM_BOT_TOKEN:
+def send_telegram_message(
+    chat_id: str,
+    text: str,
+    disable_web_page_preview: bool = False,
+    bot_token: str | None = None,
+) -> str:
+    token = bot_token or settings.TELEGRAM_BOT_TOKEN
+    if not token:
         raise RuntimeError("TELEGRAM_BOT_TOKEN es obligatorio.")
     if not chat_id:
         raise RuntimeError("El chat de Telegram es obligatorio.")
     response = requests.post(
-        f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}/sendMessage",
+        f"https://api.telegram.org/bot{token}/sendMessage",
         json={
             "chat_id": chat_id,
             "text": text,
@@ -28,15 +34,16 @@ def send_telegram_message(chat_id: str, text: str, disable_web_page_preview: boo
     return str(response.json().get("result", {}).get("message_id", ""))
 
 
-def send_telegram_photo(chat_id: str, photo_url: str, caption: str) -> str:
-    if not settings.TELEGRAM_BOT_TOKEN:
+def send_telegram_photo(chat_id: str, photo_url: str, caption: str, bot_token: str | None = None) -> str:
+    token = bot_token or settings.TELEGRAM_BOT_TOKEN
+    if not token:
         raise RuntimeError("TELEGRAM_BOT_TOKEN es obligatorio.")
     if not chat_id:
         raise RuntimeError("El chat de Telegram es obligatorio.")
     image_response = requests.get(photo_url, stream=True, timeout=30)
     image_response.raise_for_status()
     response = requests.post(
-        f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}/sendPhoto",
+        f"https://api.telegram.org/bot{token}/sendPhoto",
         data={
             "chat_id": chat_id,
             "caption": caption,
@@ -69,6 +76,8 @@ def send_product_alert(product, check) -> str:
 
 
 def send_monitor_failure_alert(run, exc: Exception) -> str:
+    if not settings.TELEGRAM_ERROR_BOT_TOKEN:
+        raise RuntimeError("TELEGRAM_ERROR_BOT_TOKEN es obligatorio para alertas de errores.")
     if not settings.TELEGRAM_ERROR_CHAT_ID:
         raise RuntimeError("TELEGRAM_ERROR_CHAT_ID es obligatorio para alertas de errores.")
 
@@ -88,4 +97,9 @@ def send_monitor_failure_alert(run, exc: Exception) -> str:
         "Posibles causas: sesion invalida, CAPTCHA, login requerido, selectores o infraestructura.\n\n"
         f"<pre>{html.escape(trace)}</pre>"
     )
-    return send_telegram_message(settings.TELEGRAM_ERROR_CHAT_ID, text, disable_web_page_preview=True)
+    return send_telegram_message(
+        settings.TELEGRAM_ERROR_CHAT_ID,
+        text,
+        disable_web_page_preview=True,
+        bot_token=settings.TELEGRAM_ERROR_BOT_TOKEN,
+    )

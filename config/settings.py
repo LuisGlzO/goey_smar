@@ -115,6 +115,7 @@ AMAZON_HEADLESS = os.getenv("AMAZON_HEADLESS", "true").lower() == "true"
 AMAZON_TIMEOUT_MS = int(os.getenv("AMAZON_TIMEOUT_MS", "45000"))
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+TELEGRAM_ERROR_BOT_TOKEN = os.getenv("TELEGRAM_ERROR_BOT_TOKEN", "")
 TELEGRAM_ERROR_CHAT_ID = os.getenv("TELEGRAM_ERROR_CHAT_ID", "")
 
 EMAIL_BACKEND = os.getenv("EMAIL_BACKEND", "django.core.mail.backends.smtp.EmailBackend")

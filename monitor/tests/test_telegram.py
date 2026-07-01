@@ -21,7 +21,7 @@ class ProductTelegramAlertTests(TestCase):
         )
 
     @override_settings(
-        TELEGRAM_BOT_TOKEN="token",
+        TELEGRAM_BOT_TOKEN="product-token",
         TELEGRAM_CHAT_ID="-100123",
         AMAZON_ASSOCIATE_TAG="goeygeeks2023-20",
     )
@@ -43,6 +43,7 @@ class ProductTelegramAlertTests(TestCase):
         get.assert_called_once_with("https://m.media-amazon.com/images/I/product.jpg", stream=True, timeout=30)
         post.assert_called_once()
         self.assertIn("/sendPhoto", post.call_args.args[0])
+        self.assertIn("botproduct-token", post.call_args.args[0])
         payload = post.call_args.kwargs["data"]
         self.assertEqual(payload["chat_id"], "-100123")
         self.assertIn("Pokemon TCG: Mega Evolution Ascended Heroes Elite Trainer Box", payload["caption"])
@@ -50,7 +51,7 @@ class ProductTelegramAlertTests(TestCase):
         self.assertEqual(post.call_args.kwargs["files"], {"photo": get.return_value.raw})
 
     @override_settings(
-        TELEGRAM_BOT_TOKEN="token",
+        TELEGRAM_BOT_TOKEN="product-token",
         TELEGRAM_CHAT_ID="-100123",
         AMAZON_ASSOCIATE_TAG="goeygeeks2023-20",
     )
@@ -75,7 +76,7 @@ class ProductTelegramAlertTests(TestCase):
         self.assertNotIn("linkCode=ogi", payload["caption"])
 
     @override_settings(
-        TELEGRAM_BOT_TOKEN="token",
+        TELEGRAM_BOT_TOKEN="product-token",
         TELEGRAM_CHAT_ID="-100123",
         AMAZON_ASSOCIATE_TAG="goeygeeks2023-20",
         AMAZON_CREATORS_API_PARTNER_TAG="goeygeeks2023-20",
@@ -89,6 +90,7 @@ class ProductTelegramAlertTests(TestCase):
 
         self.assertEqual(message_id, "89")
         self.assertIn("/sendMessage", post.call_args.args[0])
+        self.assertIn("botproduct-token", post.call_args.args[0])
         payload = post.call_args.kwargs["json"]
         self.assertIn("Nombre local", payload["text"])
         self.assertIn(
