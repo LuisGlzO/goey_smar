@@ -8,8 +8,8 @@
 4. El servicio relaciona cada ASIN con los productos activos de PostgreSQL.
 5. Cada resultado genera un `ProductCheck`; los productos no visibles quedan como
    estado desconocido.
-6. La política evalúa precio objetivo, transición de estado, cooldown, reducción
-   significativa y límite diario.
+6. La política exige botón de mover al carrito visible, precio objetivo,
+   transición de estado, cooldown, reducción significativa y límite diario.
 7. Se registra una alerta enviada, omitida o fallida y, cuando corresponde, se
    publica mediante Telegram Bot API.
 
@@ -30,4 +30,3 @@ presiona botones ni modifica el carrito.
 El worker usa concurrencia uno para impedir que dos navegadores utilicen el mismo
 perfil simultáneamente. Los cambios visuales de Amazon pueden requerir ajustes en
 el scraper; las decisiones de alertas permanecen aisladas de esos ajustes.
-

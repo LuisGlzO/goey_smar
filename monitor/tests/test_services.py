@@ -23,12 +23,18 @@ class AlertDecisionTests(TestCase):
         self.product = Product.objects.create(asin="B0ABC12345", name="Producto", max_price=Decimal("1000"))
         self.run = MonitorRun.objects.create()
 
-    def make_check(self, availability=ProductCheck.Availability.AVAILABLE, price=Decimal("900")):
+    def make_check(
+        self,
+        availability=ProductCheck.Availability.AVAILABLE,
+        price=Decimal("900"),
+        move_to_cart_visible=True,
+    ):
         return ProductCheck.objects.create(
             run=self.run,
             product=self.product,
             availability=availability,
             price=price,
+            move_to_cart_visible=move_to_cart_visible,
         )
 
     def test_first_valid_availability_alerts(self):
@@ -40,6 +46,14 @@ class AlertDecisionTests(TestCase):
         should_send, reason = alert_decision(self.product, self.make_check(price=Decimal("1100")))
         self.assertFalse(should_send)
         self.assertEqual(reason, "price_above_target")
+
+    def test_price_below_target_without_move_to_cart_does_not_alert(self):
+        should_send, reason = alert_decision(
+            self.product,
+            self.make_check(price=Decimal("489.00"), move_to_cart_visible=False),
+        )
+        self.assertFalse(should_send)
+        self.assertEqual(reason, "move_to_cart_missing")
 
     def test_consecutive_check_respects_cooldown(self):
         first = self.make_check()
@@ -64,6 +78,17 @@ class AlertDecisionTests(TestCase):
             raw_text="Este producto ya no está disponible del vendedor seleccionado. Mover al carrito",
         )
         self.assertEqual(determine_availability(item), ProductCheck.Availability.AVAILABLE)
+
+    def test_price_without_move_to_cart_is_not_available(self):
+        item = ScrapedItem(
+            asin=self.product.asin,
+            price=Decimal("489.00"),
+            move_to_cart_visible=False,
+            unavailable_message_visible=True,
+            product_url="https://www.amazon.com.mx/dp/B0ABC12345",
+            raw_text="Este producto ya no esta disponible del vendedor seleccionado. Ver productos similares $489.00",
+        )
+        self.assertEqual(determine_availability(item), ProductCheck.Availability.UNAVAILABLE)
 
 
 class MonitorSettingsTests(TestCase):

@@ -216,10 +216,11 @@ descrita arriba.
 
 ## 8. Criterios de alerta
 
-Una alerta requiere disponibilidad y precio menor o igual al objetivo. Se permite
-cuando es la primera disponibilidad, una reposición, una reducción significativa
-o ya terminó el cooldown. Se aplican además el límite diario y la prevención de
-duplicados durante cooldown.
+Una alerta requiere que el scraper detecte forzosamente el botón de mover al
+carrito y que el precio sea menor o igual al objetivo. Se permite cuando es la
+primera disponibilidad, una reposición, una reducción significativa o ya terminó
+el cooldown. Se aplican además el límite diario y la prevención de duplicados
+durante cooldown.
 
 ## 9. Incidentes
 

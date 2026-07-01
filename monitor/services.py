@@ -47,7 +47,7 @@ def send_monitor_failure_notifications(run, exc):
 
 
 def determine_availability(item):
-    if item.move_to_cart_visible or item.price is not None:
+    if item.move_to_cart_visible:
         return ProductCheck.Availability.AVAILABLE
     if item.unavailable_message_visible:
         return ProductCheck.Availability.UNAVAILABLE
@@ -67,6 +67,8 @@ def monitor_pause_reason(settings, now=None):
 
 def alert_decision(product, check, now=None):
     now = now or timezone.now()
+    if not check.move_to_cart_visible:
+        return False, "move_to_cart_missing"
     if check.availability != ProductCheck.Availability.AVAILABLE:
         return False, "not_available"
     if check.price is None:
