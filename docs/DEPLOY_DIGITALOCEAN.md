@@ -118,6 +118,12 @@ Crear superusuario:
 docker compose -f docker-compose.prod.yml exec web python manage.py createsuperuser
 ```
 
+Validar el canal tecnico de errores de Telegram:
+
+```bash
+docker compose -f docker-compose.prod.yml exec worker python manage.py test_error_alert_channel --message "deploy smoke test"
+```
+
 Abrir:
 
 ```text

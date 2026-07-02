@@ -103,3 +103,25 @@ def send_monitor_failure_alert(run, exc: Exception) -> str:
         disable_web_page_preview=True,
         bot_token=settings.TELEGRAM_ERROR_BOT_TOKEN,
     )
+
+
+def send_monitor_test_alert(message: str = "") -> str:
+    if not settings.TELEGRAM_ERROR_BOT_TOKEN:
+        raise RuntimeError("TELEGRAM_ERROR_BOT_TOKEN es obligatorio para alertas de errores.")
+    if not settings.TELEGRAM_ERROR_CHAT_ID:
+        raise RuntimeError("TELEGRAM_ERROR_CHAT_ID es obligatorio para alertas de errores.")
+
+    now = timezone.localtime(timezone.now()).strftime("%Y-%m-%d %H:%M:%S %Z")
+    extra = f"\nMensaje: <code>{html.escape(message)}</code>" if message else ""
+    text = (
+        "<b>Prueba de canal tecnico</b>\n"
+        "Goey SMAR pudo publicar en el canal de alertas de errores.\n"
+        f"Fecha: <code>{html.escape(now)}</code>"
+        f"{extra}"
+    )
+    return send_telegram_message(
+        settings.TELEGRAM_ERROR_CHAT_ID,
+        text,
+        disable_web_page_preview=True,
+        bot_token=settings.TELEGRAM_ERROR_BOT_TOKEN,
+    )

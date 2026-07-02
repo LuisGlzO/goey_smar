@@ -47,6 +47,19 @@ cooldown. Por default solo se envia una alerta de fallo por hora; cambielo con:
 MONITOR_FAILURE_ALERT_COOLDOWN_MINUTES=60
 ```
 
+Para validar manualmente que el bot tecnico puede publicar en el canal de errores,
+ejecute:
+
+```powershell
+.\scripts\manage.ps1 test_error_alert_channel --message "prueba manual"
+```
+
+En Docker/produccion:
+
+```bash
+docker compose -f docker-compose.prod.yml exec worker python manage.py test_error_alert_channel --message "prueba manual"
+```
+
 Use Python 3.12 x64 para instalaciones locales en Windows. Si aparece
 `DLL load failed while importing _greenlet`, recree el entorno con Python 3.12 y
 ejecute `.\scripts\check-runtime.ps1`. Si persiste, instale Microsoft Visual C++
