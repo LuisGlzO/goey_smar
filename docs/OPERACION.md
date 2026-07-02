@@ -219,6 +219,26 @@ registra como `Omitido` con razon `previous_run_still_running`. Esto evita que
 dos scrapers usen simultaneamente el mismo perfil de Amazon. La variable
 `MONITOR_RUNNING_STALE_MINUTES` define cuanto tiempo se considera valida una
 ejecucion `running` antes de tratarla como stale.
+Cuando entra una nueva ejecucion, cualquier `running` mas viejo que esa ventana
+se marca automaticamente como `Fallido` con error `stale_run_recovered`.
+
+Para recuperar manualmente ejecuciones viejas que ya quedaron en `running`:
+
+```powershell
+.\scripts\manage.ps1 recover_stale_monitor_runs
+```
+
+En Docker/produccion:
+
+```bash
+docker compose -f docker-compose.prod.yml exec worker python manage.py recover_stale_monitor_runs
+```
+
+Si el proceso real del worker tambien quedo colgado, reinicie el servicio:
+
+```bash
+docker compose -f docker-compose.prod.yml restart worker
+```
 
 ## 7. Docker Compose
 

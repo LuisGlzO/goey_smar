@@ -30,6 +30,18 @@ class MonitorRunAdmin(admin.ModelAdmin):
     list_display = ("started_at", "finished_at", "status", "items_seen")
     list_filter = ("status",)
     readonly_fields = ("started_at", "finished_at", "status", "items_seen", "error")
+    actions = ("mark_running_as_failed",)
+
+    @admin.action(description="Marcar ejecuciones en curso seleccionadas como fallidas")
+    def mark_running_as_failed(self, request, queryset):
+        from django.utils import timezone
+
+        updated = queryset.filter(status=MonitorRun.Status.RUNNING).update(
+            status=MonitorRun.Status.FAILED,
+            finished_at=timezone.now(),
+            error="manual_admin_recovery",
+        )
+        self.message_user(request, f"Ejecuciones marcadas como fallidas: {updated}.")
 
 
 @admin.register(MonitorSettings)

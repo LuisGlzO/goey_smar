@@ -313,6 +313,12 @@ docker compose -f docker-compose.prod.yml logs --tail=80 beat
 ```
 
 En Django Admin revise `Monitor runs`, `Product checks` y `Alerts`.
+Si quedo una ejecucion antigua en `En ejecucion`, puede cerrarla con:
+
+```bash
+docker compose -f docker-compose.prod.yml exec worker python manage.py recover_stale_monitor_runs
+docker compose -f docker-compose.prod.yml restart worker
+```
 
 Si el navegador falla indicando que el perfil esta en uso, repita los pasos 2 y
 3 antes de intentar de nuevo.

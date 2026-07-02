@@ -12,17 +12,33 @@ from .scraper import scrape_saved_items
 from .telegram import send_monitor_failure_alert, send_product_alert
 
 logger = logging.getLogger(__name__)
+STALE_RUN_ERROR = "stale_run_recovered"
+
+
+def recover_stale_monitor_runs(now=None):
+    now = now or timezone.now()
+    stale_cutoff = now - timedelta(minutes=django_settings.MONITOR_RUNNING_STALE_MINUTES)
+    return (
+        MonitorRun.objects.filter(status=MonitorRun.Status.RUNNING, started_at__lt=stale_cutoff)
+        .update(
+            status=MonitorRun.Status.FAILED,
+            finished_at=now,
+            error=f"{STALE_RUN_ERROR}: exceeded {django_settings.MONITOR_RUNNING_STALE_MINUTES} minutes",
+        )
+    )
 
 
 @transaction.atomic
 def start_monitor_run():
     monitor_settings, _ = MonitorSettings.objects.select_for_update().get_or_create(pk=1)
-    stale_cutoff = timezone.now() - timedelta(minutes=django_settings.MONITOR_RUNNING_STALE_MINUTES)
-    if MonitorRun.objects.filter(status=MonitorRun.Status.RUNNING, started_at__gte=stale_cutoff).exists():
+    now = timezone.now()
+    recover_stale_monitor_runs(now=now)
+    running_cutoff = now - timedelta(minutes=django_settings.MONITOR_RUNNING_STALE_MINUTES)
+    if MonitorRun.objects.filter(status=MonitorRun.Status.RUNNING, started_at__gte=running_cutoff).exists():
         return (
             MonitorRun.objects.create(
                 status=MonitorRun.Status.SKIPPED,
-                finished_at=timezone.now(),
+                finished_at=now,
                 error="previous_run_still_running",
             ),
             monitor_settings,

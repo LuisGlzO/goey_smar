@@ -13,6 +13,7 @@ from monitor.services import (
     alert_decision,
     determine_availability,
     process_missing_product,
+    recover_stale_monitor_runs,
     run_monitor,
     send_monitor_failure_notifications,
 )
@@ -125,6 +126,35 @@ class MonitorSettingsTests(TestCase):
         self.assertEqual(run.status, MonitorRun.Status.SKIPPED)
         self.assertEqual(run.error, "previous_run_still_running")
         scrape_saved_items.assert_not_called()
+
+    @override_settings(MONITOR_RUNNING_STALE_MINUTES=10)
+    @patch("monitor.services.scrape_saved_items", return_value=[])
+    def test_stale_running_monitor_is_recovered_before_new_execution(self, scrape_saved_items):
+        stale = MonitorRun.objects.create(status=MonitorRun.Status.RUNNING)
+        MonitorRun.objects.filter(pk=stale.pk).update(started_at=timezone.now() - timedelta(minutes=30))
+
+        run = run_monitor()
+
+        stale.refresh_from_db()
+        self.assertEqual(stale.status, MonitorRun.Status.FAILED)
+        self.assertIn("stale_run_recovered", stale.error)
+        self.assertIsNotNone(stale.finished_at)
+        self.assertEqual(run.status, MonitorRun.Status.SUCCESS)
+        scrape_saved_items.assert_called_once()
+
+    @override_settings(MONITOR_RUNNING_STALE_MINUTES=10)
+    def test_recover_stale_monitor_runs_returns_recovered_count(self):
+        stale = MonitorRun.objects.create(status=MonitorRun.Status.RUNNING)
+        recent = MonitorRun.objects.create(status=MonitorRun.Status.RUNNING)
+        MonitorRun.objects.filter(pk=stale.pk).update(started_at=timezone.now() - timedelta(minutes=30))
+
+        recovered = recover_stale_monitor_runs()
+
+        stale.refresh_from_db()
+        recent.refresh_from_db()
+        self.assertEqual(recovered, 1)
+        self.assertEqual(stale.status, MonitorRun.Status.FAILED)
+        self.assertEqual(recent.status, MonitorRun.Status.RUNNING)
 
     @patch("monitor.services.send_monitor_failure_notifications")
     @patch("monitor.services.scrape_saved_items", side_effect=RuntimeError("captcha requerido"))
