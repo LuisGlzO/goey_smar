@@ -1,6 +1,7 @@
 import re
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
 from urllib.parse import urljoin
 
 from django.conf import settings
@@ -18,6 +19,12 @@ UNAVAILABLE_TERMS = (
     "out of stock",
 )
 MOVE_TO_CART_TERMS = ("mover al carrito", "move to cart")
+CHROMIUM_PROFILE_LOCK_FILES = (
+    "SingletonLock",
+    "SingletonSocket",
+    "SingletonCookie",
+    "DevToolsActivePort",
+)
 
 ITEM_PAYLOADS_JS = """root => {
     const candidates = new Set();
@@ -151,13 +158,30 @@ def item_score(item: ScrapedItem) -> tuple:
     )
 
 
+def cleanup_chromium_profile_locks(profile_dir: str) -> None:
+    profile_path = Path(profile_dir)
+    for filename in CHROMIUM_PROFILE_LOCK_FILES:
+        try:
+            (profile_path / filename).unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
 def scrape_saved_items(headless: bool | None = None) -> list[ScrapedItem]:
     headless = settings.AMAZON_HEADLESS if headless is None else headless
+    cleanup_chromium_profile_locks(settings.AMAZON_PROFILE_DIR)
     with sync_playwright() as playwright:
         context = playwright.chromium.launch_persistent_context(
             settings.AMAZON_PROFILE_DIR,
             headless=headless,
             locale="es-MX",
+            args=[
+                "--disable-gpu",
+                "--disable-software-rasterizer",
+                "--disable-dev-shm-usage",
+                "--no-zygote",
+            ],
+            timeout=settings.AMAZON_BROWSER_LAUNCH_TIMEOUT_MS,
         )
         try:
             page = context.pages[0] if context.pages else context.new_page()

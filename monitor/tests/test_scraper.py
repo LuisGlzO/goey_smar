@@ -1,8 +1,18 @@
 from decimal import Decimal
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from django.test import SimpleTestCase
 
-from monitor.scraper import ScrapedItem, extract_asin, item_from_payload, item_score, parse_price
+from monitor.scraper import (
+    CHROMIUM_PROFILE_LOCK_FILES,
+    ScrapedItem,
+    cleanup_chromium_profile_locks,
+    extract_asin,
+    item_from_payload,
+    item_score,
+    parse_price,
+)
 
 
 class ScraperParsingTests(SimpleTestCase):
@@ -60,3 +70,13 @@ class ScraperParsingTests(SimpleTestCase):
             source="saved",
         )
         self.assertGreater(item_score(cart_item), item_score(saved_item))
+
+    def test_cleanup_chromium_profile_locks_removes_stale_files(self):
+        with TemporaryDirectory() as profile_dir:
+            for filename in CHROMIUM_PROFILE_LOCK_FILES:
+                (Path(profile_dir) / filename).write_text("")
+
+            cleanup_chromium_profile_locks(profile_dir)
+
+            for filename in CHROMIUM_PROFILE_LOCK_FILES:
+                self.assertFalse((Path(profile_dir) / filename).exists())

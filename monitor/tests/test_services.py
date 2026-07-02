@@ -1,9 +1,10 @@
-from datetime import time
+from datetime import time, timedelta
 from decimal import Decimal
 from unittest.mock import ANY, patch
 
 from django.core import mail
 from django.test import TestCase, override_settings
+from django.utils import timezone
 
 from monitor.email import send_monitor_failure_email
 from monitor.models import Alert, MonitorRun, MonitorSettings, Product, ProductCheck
@@ -150,34 +151,37 @@ class MonitorSettingsTests(TestCase):
 
     @patch("monitor.services.send_monitor_failure_email", return_value=1)
     @patch("monitor.services.send_monitor_failure_alert")
-    def test_failure_notifier_stops_after_successful_email(self, send_failure_alert, send_failure_email):
+    def test_failure_notifier_stops_after_successful_telegram(self, send_failure_alert, send_failure_email):
         run = MonitorRun.objects.create(status=MonitorRun.Status.FAILED, error="captcha requerido")
 
         send_monitor_failure_notifications(run, RuntimeError("captcha requerido"))
 
-        send_failure_email.assert_called_once()
-        send_failure_alert.assert_not_called()
+        send_failure_alert.assert_called_once()
+        send_failure_email.assert_not_called()
 
     @patch("monitor.services.send_monitor_failure_email", return_value=0)
-    @patch("monitor.services.send_monitor_failure_alert")
-    def test_failure_notifier_uses_telegram_when_email_has_no_recipients(self, send_failure_alert, send_failure_email):
-        run = MonitorRun.objects.create(status=MonitorRun.Status.FAILED, error="captcha requerido")
-
-        send_monitor_failure_notifications(run, RuntimeError("captcha requerido"))
-
-        send_failure_email.assert_called_once()
-        send_failure_alert.assert_called_once()
-
-    @patch("monitor.services.send_monitor_failure_email", side_effect=RuntimeError("smtp caido"))
-    @patch("monitor.services.send_monitor_failure_alert")
-    def test_failure_notifier_uses_telegram_when_email_fails(self, send_failure_alert, send_failure_email):
+    @patch("monitor.services.send_monitor_failure_alert", side_effect=RuntimeError("telegram caido"))
+    def test_failure_notifier_uses_email_when_telegram_fails(self, send_failure_alert, send_failure_email):
         run = MonitorRun.objects.create(status=MonitorRun.Status.FAILED, error="captcha requerido")
 
         with self.assertLogs("monitor.services", level="ERROR"):
             send_monitor_failure_notifications(run, RuntimeError("captcha requerido"))
 
-        send_failure_email.assert_called_once()
         send_failure_alert.assert_called_once()
+        send_failure_email.assert_called_once()
+
+    @patch("monitor.services.send_monitor_failure_alert")
+    @patch("monitor.services.send_monitor_failure_email")
+    def test_failure_notifier_respects_failure_cooldown(self, send_failure_email, send_failure_alert):
+        previous = MonitorRun.objects.create(status=MonitorRun.Status.FAILED, error="captcha requerido")
+        MonitorRun.objects.filter(pk=previous.pk).update(started_at=timezone.now() - timedelta(minutes=30))
+        run = MonitorRun.objects.create(status=MonitorRun.Status.FAILED, error="captcha requerido")
+
+        with self.assertLogs("monitor.services", level="INFO"):
+            send_monitor_failure_notifications(run, RuntimeError("captcha requerido"))
+
+        send_failure_alert.assert_not_called()
+        send_failure_email.assert_not_called()
 
 
 class MonitorFailureEmailTests(TestCase):

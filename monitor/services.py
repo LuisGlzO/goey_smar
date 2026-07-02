@@ -31,19 +31,29 @@ def start_monitor_run():
 
 
 def send_monitor_failure_notifications(run, exc):
-    email_sent = False
-    try:
-        email_sent = send_monitor_failure_email(run, exc) > 0
-    except Exception:
-        logger.exception("No se pudo enviar el email de fallo del monitor.")
-
-    if email_sent:
+    cooldown_cutoff = timezone.now() - timedelta(minutes=django_settings.MONITOR_FAILURE_ALERT_COOLDOWN_MINUTES)
+    recent_failure = (
+        MonitorRun.objects.filter(status=MonitorRun.Status.FAILED, started_at__gte=cooldown_cutoff)
+        .exclude(pk=run.pk)
+        .exists()
+    )
+    if recent_failure:
+        logger.info(
+            "Se omite alerta de fallo del monitor por cooldown de %s minutos.",
+            django_settings.MONITOR_FAILURE_ALERT_COOLDOWN_MINUTES,
+        )
         return
 
     try:
         send_monitor_failure_alert(run, exc)
+        return
     except Exception:
         logger.exception("No se pudo enviar la alerta de fallo del monitor por Telegram.")
+
+    try:
+        send_monitor_failure_email(run, exc)
+    except Exception:
+        logger.exception("No se pudo enviar el email de fallo del monitor.")
 
 
 def determine_availability(item):

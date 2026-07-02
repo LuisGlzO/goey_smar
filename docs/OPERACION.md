@@ -8,8 +8,8 @@ Copie `.env.example` a `.env`. Configure como mínimo:
 - `POSTGRES_PASSWORD`
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_CHAT_ID`
-- `TELEGRAM_ERROR_BOT_TOKEN`, bot para avisos tecnicos si no se usa email
-- `TELEGRAM_ERROR_CHAT_ID`, canal alterno para avisos tecnicos si no se usa email
+- `TELEGRAM_ERROR_BOT_TOKEN`, bot para avisos tecnicos del monitor
+- `TELEGRAM_ERROR_CHAT_ID`, canal para avisos tecnicos del monitor
 - `AMAZON_ASSOCIATE_TAG`, identificador de seguimiento del programa de afiliados
 - `AMAZON_SAVED_ITEMS_URL`, si la cuenta usa otro dominio de Amazon
 - `MONITOR_FAILURE_EMAIL_RECIPIENTS`, correos que recibiran aviso si falla el scraper
@@ -32,13 +32,20 @@ DEFAULT_FROM_EMAIL=tu-correo@gmail.com
 MONITOR_FAILURE_EMAIL_RECIPIENTS=operaciones@example.com
 ```
 
-Si `MONITOR_FAILURE_EMAIL_RECIPIENTS` queda vacio, los fallos se envian por
-Telegram con `TELEGRAM_ERROR_BOT_TOKEN` a `TELEGRAM_ERROR_CHAT_ID`. Si el correo
-esta configurado pero falla, tambien se intenta ese canal de Telegram como
-fallback. Sin email ni configuracion completa de Telegram para errores, el fallo
-queda registrado en `Monitor runs` y en logs.
+Los fallos se envian primero por Telegram con `TELEGRAM_ERROR_BOT_TOKEN` a
+`TELEGRAM_ERROR_CHAT_ID`. Si Telegram falla y `MONITOR_FAILURE_EMAIL_RECIPIENTS`
+esta configurado, se intenta email como respaldo. Sin configuracion completa de
+Telegram para errores ni email de respaldo, el fallo queda registrado en
+`Monitor runs` y en logs.
 El aviso se dispara ante cualquier excepcion de la ejecucion, incluyendo sesion
 invalida, CAPTCHA o login requerido.
+
+Para evitar spam cuando el monitor corre cada minuto, las alertas tecnicas tienen
+cooldown. Por default solo se envia una alerta de fallo por hora; cambielo con:
+
+```env
+MONITOR_FAILURE_ALERT_COOLDOWN_MINUTES=60
+```
 
 Use Python 3.12 x64 para instalaciones locales en Windows. Si aparece
 `DLL load failed while importing _greenlet`, recree el entorno con Python 3.12 y
@@ -175,6 +182,8 @@ la tarea y el worker ejecuta Playwright, registra resultados y envía Telegram.
 Las tareas publicadas por Beat expiran segun `MONITOR_TASK_EXPIRES_SECONDS`, por
 lo que si una corrida tarda demasiado no se acumulan revisiones viejas para
 ejecutarse inmediatamente despues.
+Ademas, `MONITOR_TASK_TIME_LIMIT_SECONDS` define el limite duro de vida de una
+tarea del worker.
 
 ### Pausa por horario
 
@@ -228,6 +237,10 @@ durante cooldown.
 ## 9. Incidentes
 
 - Ejecución fallida por sesión: regenere la sesión de Amazon.
+- `pthread_create: Resource temporarily unavailable`: el contenedor o Droplet se
+  quedo sin hilos/procesos o memoria mientras Chromium arrancaba. Reinicie
+  `worker`, revise `docker stats`, `free -h`, `ps -eLf | wc -l` y considere subir
+  RAM si se repite.
 - Selectores sin resultados: inspeccione cambios visuales de Amazon y ajuste
   `monitor/scraper.py`.
 - Error Telegram: valide token, identificador del canal y permisos del bot.
