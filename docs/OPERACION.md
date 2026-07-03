@@ -205,6 +205,10 @@ Desde Django Admin abra `Configuracion del monitor`. Ahi puede:
 - desactivar completamente el monitoreo con `enabled`;
 - definir `active_from` y `active_until` para permitir revisiones solo en una
   ventana horaria local.
+- configurar `Cooldown anti-falso-restock (minutos)`, un candado uniforme para
+  todos los productos pero aplicado individualmente por producto. Si un producto
+  ya envio alerta dentro de esa ventana, no vuelve a alertar hasta que termine.
+  Use `0` para desactivarlo.
 
 Si ambas horas estan vacias, el monitor queda activo todo el dia. Si la ventana
 cruza medianoche, por ejemplo `23:00` a `07:00`, se interpreta como horario

@@ -91,8 +91,16 @@ def monitor_pause_reason(settings, now=None):
     return "outside_active_window"
 
 
-def alert_decision(product, check, now=None):
+def anti_false_restock_cooldown_active(sent_alerts, monitor_settings, now):
+    cooldown_minutes = monitor_settings.anti_false_restock_cooldown_minutes if monitor_settings else 0
+    if cooldown_minutes <= 0:
+        return False
+    return sent_alerts.filter(created_at__gte=now - timedelta(minutes=cooldown_minutes)).exists()
+
+
+def alert_decision(product, check, now=None, monitor_settings=None):
     now = now or timezone.now()
+    monitor_settings = monitor_settings or MonitorSettings.load()
     if not check.move_to_cart_visible:
         return False, "move_to_cart_missing"
     if check.availability != ProductCheck.Availability.AVAILABLE:
@@ -104,6 +112,9 @@ def alert_decision(product, check, now=None):
 
     start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
     sent_alerts = Alert.objects.filter(product=product, status=Alert.Status.SENT)
+    if anti_false_restock_cooldown_active(sent_alerts, monitor_settings, now):
+        return False, "anti_false_restock_cooldown"
+
     if sent_alerts.filter(created_at__gte=start_of_day).count() >= product.max_alerts_per_day:
         return False, "daily_limit"
 
@@ -126,7 +137,7 @@ def alert_decision(product, check, now=None):
 
 
 @transaction.atomic
-def process_item(run, product, item):
+def process_item(run, product, item, monitor_settings=None):
     check = ProductCheck.objects.create(
         run=run,
         product=product,
@@ -137,7 +148,7 @@ def process_item(run, product, item):
         product_url=item.product_url,
         raw_text=item.raw_text,
     )
-    should_send, reason = alert_decision(product, check)
+    should_send, reason = alert_decision(product, check, monitor_settings=monitor_settings)
     if not should_send:
         Alert.objects.create(product=product, product_check=check, status=Alert.Status.SKIPPED, reason=reason)
         return check
@@ -175,7 +186,7 @@ def run_monitor():
         for item in items:
             product = products.pop(item.asin, None)
             if product:
-                process_item(run, product, item)
+                process_item(run, product, item, settings)
         for product in products.values():
             process_missing_product(run, product)
         run.items_seen = len(items)

@@ -46,8 +46,8 @@ class MonitorRunAdmin(admin.ModelAdmin):
 
 @admin.register(MonitorSettings)
 class MonitorSettingsAdmin(admin.ModelAdmin):
-    list_display = ("enabled", "active_from", "active_until", "updated_at")
-    fields = ("enabled", "active_from", "active_until", "updated_at")
+    list_display = ("enabled", "anti_false_restock_cooldown_minutes", "active_from", "active_until", "updated_at")
+    fields = ("enabled", "anti_false_restock_cooldown_minutes", "active_from", "active_until", "updated_at")
     readonly_fields = ("updated_at",)
 
     def has_add_permission(self, request):

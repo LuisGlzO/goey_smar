@@ -36,6 +36,14 @@ class Product(models.Model):
 
 class MonitorSettings(models.Model):
     enabled = models.BooleanField(default=True)
+    anti_false_restock_cooldown_minutes = models.PositiveIntegerField(
+        "Cooldown anti-falso-restock (minutos)",
+        default=0,
+        help_text=(
+            "Minutos para bloquear una nueva alerta del mismo producto despues "
+            "de una alerta enviada. Use 0 para desactivar."
+        ),
+    )
     active_from = models.TimeField(
         null=True,
         blank=True,

@@ -64,6 +64,60 @@ class AlertDecisionTests(TestCase):
         self.assertFalse(should_send)
         self.assertEqual(reason, "cooldown")
 
+    def test_anti_false_restock_cooldown_blocks_recent_same_product_alert(self):
+        monitor_settings = MonitorSettings(anti_false_restock_cooldown_minutes=5)
+        first = self.make_check()
+        alert = Alert.objects.create(
+            product=self.product,
+            product_check=first,
+            status=Alert.Status.SENT,
+            reason="first_availability",
+        )
+        Alert.objects.filter(pk=alert.pk).update(created_at=timezone.now() - timedelta(minutes=2))
+
+        should_send, reason = alert_decision(self.product, self.make_check(), monitor_settings=monitor_settings)
+
+        self.assertFalse(should_send)
+        self.assertEqual(reason, "anti_false_restock_cooldown")
+
+    def test_anti_false_restock_cooldown_does_not_block_other_products(self):
+        monitor_settings = MonitorSettings(anti_false_restock_cooldown_minutes=5)
+        other_product = Product.objects.create(asin="B0XYZ12345", name="Otro", max_price=Decimal("1000"))
+        first = self.make_check()
+        Alert.objects.create(
+            product=self.product,
+            product_check=first,
+            status=Alert.Status.SENT,
+            reason="first_availability",
+        )
+        other_check = ProductCheck.objects.create(
+            run=self.run,
+            product=other_product,
+            availability=ProductCheck.Availability.AVAILABLE,
+            price=Decimal("900"),
+            move_to_cart_visible=True,
+        )
+
+        should_send, reason = alert_decision(other_product, other_check, monitor_settings=monitor_settings)
+
+        self.assertTrue(should_send)
+        self.assertEqual(reason, "first_availability")
+
+    def test_anti_false_restock_cooldown_zero_keeps_existing_product_cooldown(self):
+        monitor_settings = MonitorSettings(anti_false_restock_cooldown_minutes=0)
+        first = self.make_check()
+        Alert.objects.create(
+            product=self.product,
+            product_check=first,
+            status=Alert.Status.SENT,
+            reason="first_availability",
+        )
+
+        should_send, reason = alert_decision(self.product, self.make_check(), monitor_settings=monitor_settings)
+
+        self.assertFalse(should_send)
+        self.assertEqual(reason, "cooldown")
+
     def test_missing_product_is_audited_as_unknown(self):
         process_missing_product(self.run, self.product)
         check = ProductCheck.objects.get()
