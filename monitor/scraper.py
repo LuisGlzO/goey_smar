@@ -1,4 +1,5 @@
 import re
+import time
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -6,6 +7,8 @@ from urllib.parse import urljoin
 
 from django.conf import settings
 from playwright.sync_api import sync_playwright
+
+from .errors import is_infrastructure_error
 
 ASIN_RE = re.compile(r"/(?:dp|gp/product)/([A-Z0-9]{10})(?:[/?]|$)", re.IGNORECASE)
 PRICE_RE = re.compile(r"(?:MXN\s*|\$\s*)([\d.,]+)", re.IGNORECASE)
@@ -167,8 +170,7 @@ def cleanup_chromium_profile_locks(profile_dir: str) -> None:
             pass
 
 
-def scrape_saved_items(headless: bool | None = None) -> list[ScrapedItem]:
-    headless = settings.AMAZON_HEADLESS if headless is None else headless
+def scrape_saved_items_once(headless: bool) -> list[ScrapedItem]:
     cleanup_chromium_profile_locks(settings.AMAZON_PROFILE_DIR)
     with sync_playwright() as playwright:
         context = playwright.chromium.launch_persistent_context(
@@ -205,3 +207,18 @@ def scrape_saved_items(headless: bool | None = None) -> list[ScrapedItem]:
             return list(by_asin.values())
         finally:
             context.close()
+
+
+def scrape_saved_items(headless: bool | None = None) -> list[ScrapedItem]:
+    headless = settings.AMAZON_HEADLESS if headless is None else headless
+    attempts = max(settings.AMAZON_SCRAPER_MAX_ATTEMPTS, 1)
+    last_exc = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return scrape_saved_items_once(headless)
+        except Exception as exc:
+            last_exc = exc
+            if attempt >= attempts or not is_infrastructure_error(exc):
+                raise
+            time.sleep(settings.AMAZON_SCRAPER_RETRY_DELAY_SECONDS)
+    raise last_exc

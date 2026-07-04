@@ -11,9 +11,11 @@ from monitor.models import Alert, MonitorRun, MonitorSettings, Product, ProductC
 from monitor.scraper import ScrapedItem
 from monitor.services import (
     alert_decision,
+    consecutive_infrastructure_failures,
     determine_availability,
     process_missing_product,
     recover_stale_monitor_runs,
+    request_worker_restart_after_infrastructure_failures,
     run_monitor,
     send_monitor_failure_notifications,
 )
@@ -266,6 +268,55 @@ class MonitorSettingsTests(TestCase):
 
         send_failure_alert.assert_not_called()
         send_failure_email.assert_not_called()
+
+    def test_consecutive_infrastructure_failures_counts_only_latest_infra_errors(self):
+        MonitorRun.objects.create(status=MonitorRun.Status.FAILED, error="Page.goto: Timeout 45000ms exceeded")
+        MonitorRun.objects.create(status=MonitorRun.Status.FAILED, error="pthread_create: Resource temporarily unavailable")
+        MonitorRun.objects.create(status=MonitorRun.Status.SUCCESS)
+
+        self.assertEqual(consecutive_infrastructure_failures(3), 0)
+
+        MonitorRun.objects.all().delete()
+        MonitorRun.objects.create(status=MonitorRun.Status.SUCCESS)
+        MonitorRun.objects.create(status=MonitorRun.Status.FAILED, error="Page.goto: Timeout 45000ms exceeded")
+        MonitorRun.objects.create(status=MonitorRun.Status.FAILED, error="pthread_create: Resource temporarily unavailable")
+
+        self.assertEqual(consecutive_infrastructure_failures(3), 2)
+
+    @override_settings(
+        MONITOR_INFRASTRUCTURE_FAILURE_RESTART_THRESHOLD=2,
+        MONITOR_AUTO_RESTART_WORKER_ON_INFRA_FAILURE=True,
+    )
+    @patch("monitor.services.os._exit")
+    @patch("monitor.services.os.kill")
+    @patch("monitor.services.os.getppid", return_value=123)
+    @patch("monitor.services.sys.argv", ["celery", "-A", "config", "worker"])
+    def test_infrastructure_failures_request_worker_restart_inside_celery(self, getppid, kill, exit_process):
+        MonitorRun.objects.create(status=MonitorRun.Status.FAILED, error="Page.goto: Timeout 45000ms exceeded")
+        MonitorRun.objects.create(status=MonitorRun.Status.FAILED, error="pthread_create: Resource temporarily unavailable")
+
+        with self.assertLogs("monitor.services", level="ERROR"):
+            request_worker_restart_after_infrastructure_failures()
+
+        kill.assert_called_once()
+        exit_process.assert_called_once()
+
+    @override_settings(
+        MONITOR_INFRASTRUCTURE_FAILURE_RESTART_THRESHOLD=2,
+        MONITOR_AUTO_RESTART_WORKER_ON_INFRA_FAILURE=True,
+    )
+    @patch("monitor.services.os._exit")
+    @patch("monitor.services.os.kill")
+    @patch("monitor.services.sys.argv", ["manage.py", "monitor_saved_items"])
+    def test_infrastructure_failures_do_not_restart_manual_command(self, kill, exit_process):
+        MonitorRun.objects.create(status=MonitorRun.Status.FAILED, error="Page.goto: Timeout 45000ms exceeded")
+        MonitorRun.objects.create(status=MonitorRun.Status.FAILED, error="pthread_create: Resource temporarily unavailable")
+
+        with self.assertLogs("monitor.services", level="ERROR"):
+            request_worker_restart_after_infrastructure_failures()
+
+        kill.assert_not_called()
+        exit_process.assert_not_called()
 
 
 class MonitorFailureEmailTests(TestCase):

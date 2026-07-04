@@ -1,4 +1,7 @@
 import logging
+import os
+import signal
+import sys
 from datetime import timedelta
 from decimal import Decimal
 
@@ -7,12 +10,14 @@ from django.db import transaction
 from django.utils import timezone
 
 from .email import send_monitor_failure_email
+from .errors import is_infrastructure_error
 from .models import Alert, MonitorRun, MonitorSettings, Product, ProductCheck
 from .scraper import scrape_saved_items
 from .telegram import send_monitor_failure_alert, send_product_alert
 
 logger = logging.getLogger(__name__)
 STALE_RUN_ERROR = "stale_run_recovered"
+WORKER_RESTART_EXIT_CODE = 70
 
 
 def recover_stale_monitor_runs(now=None):
@@ -70,6 +75,43 @@ def send_monitor_failure_notifications(run, exc):
         send_monitor_failure_email(run, exc)
     except Exception:
         logger.exception("No se pudo enviar el email de fallo del monitor.")
+
+
+def running_inside_celery_worker():
+    args = " ".join(sys.argv).lower()
+    return "celery" in args and "worker" in args
+
+
+def consecutive_infrastructure_failures(limit):
+    count = 0
+    runs = MonitorRun.objects.exclude(status=MonitorRun.Status.SKIPPED).order_by("-started_at", "-pk")[:limit]
+    for run in runs:
+        if run.status != MonitorRun.Status.FAILED or not is_infrastructure_error(run.error):
+            break
+        count += 1
+    return count
+
+
+def request_worker_restart_after_infrastructure_failures():
+    threshold = django_settings.MONITOR_INFRASTRUCTURE_FAILURE_RESTART_THRESHOLD
+    if not django_settings.MONITOR_AUTO_RESTART_WORKER_ON_INFRA_FAILURE or threshold <= 0:
+        return
+    failures = consecutive_infrastructure_failures(threshold)
+    if failures < threshold:
+        return
+
+    logger.error(
+        "Se detectaron %s fallos consecutivos de infraestructura. Se solicita reinicio del worker.",
+        failures,
+    )
+    if not running_inside_celery_worker():
+        logger.error("No se reinicia automaticamente porque el proceso actual no parece ser un Celery worker.")
+        return
+
+    parent_pid = os.getppid()
+    if parent_pid > 1:
+        os.kill(parent_pid, signal.SIGTERM)
+    os._exit(WORKER_RESTART_EXIT_CODE)
 
 
 def determine_availability(item):
@@ -197,6 +239,8 @@ def run_monitor():
         run.finished_at = timezone.now()
         run.save(update_fields=("items_seen", "status", "error", "finished_at"))
         send_monitor_failure_notifications(run, exc)
+        if is_infrastructure_error(exc):
+            request_worker_restart_after_infrastructure_failures()
         raise
     finally:
         if run.finished_at is None:

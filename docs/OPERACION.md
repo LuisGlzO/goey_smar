@@ -198,6 +198,28 @@ ejecutarse inmediatamente despues.
 Ademas, `MONITOR_TASK_TIME_LIMIT_SECONDS` define el limite duro de vida de una
 tarea del worker.
 
+Ante errores transitorios de infraestructura de Playwright/Chromium, como timeout
+de navegacion o fallo al lanzar el navegador, el scraper reintenta con un
+contexto nuevo. Configure:
+
+```env
+AMAZON_SCRAPER_MAX_ATTEMPTS=2
+AMAZON_SCRAPER_RETRY_DELAY_SECONDS=5
+```
+
+Si se acumulan varios fallos consecutivos de infraestructura, el worker solicita
+su propio reinicio para que Docker lo levante limpio con `restart:
+unless-stopped`. Configure:
+
+```env
+MONITOR_INFRASTRUCTURE_FAILURE_RESTART_THRESHOLD=3
+MONITOR_AUTO_RESTART_WORKER_ON_INFRA_FAILURE=true
+```
+
+Esto cubre casos como `pthread_create: Resource temporarily unavailable`,
+`launch_persistent_context`, `Target page, context or browser has been closed` y
+timeouts repetidos de `Page.goto`.
+
 ### Pausa por horario
 
 Desde Django Admin abra `Configuracion del monitor`. Ahi puede:
@@ -277,7 +299,8 @@ durante cooldown.
 - `pthread_create: Resource temporarily unavailable`: el contenedor o Droplet se
   quedo sin hilos/procesos o memoria mientras Chromium arrancaba. Reinicie
   `worker`, revise `docker stats`, `free -h`, `ps -eLf | wc -l` y considere subir
-  RAM si se repite.
+  RAM si se repite. El worker tambien intenta auto-recuperarse si el error se
+  repite varias veces consecutivas.
 - Selectores sin resultados: inspeccione cambios visuales de Amazon y ajuste
   `monitor/scraper.py`.
 - Error Telegram: valide token, identificador del canal y permisos del bot.

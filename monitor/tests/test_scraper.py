@@ -1,8 +1,9 @@
 from decimal import Decimal
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, override_settings
 
 from monitor.scraper import (
     CHROMIUM_PROFILE_LOCK_FILES,
@@ -12,6 +13,7 @@ from monitor.scraper import (
     item_from_payload,
     item_score,
     parse_price,
+    scrape_saved_items,
 )
 
 
@@ -80,3 +82,22 @@ class ScraperParsingTests(SimpleTestCase):
 
             for filename in CHROMIUM_PROFILE_LOCK_FILES:
                 self.assertFalse((Path(profile_dir) / filename).exists())
+
+    @override_settings(AMAZON_SCRAPER_MAX_ATTEMPTS=2, AMAZON_SCRAPER_RETRY_DELAY_SECONDS=0)
+    @patch("monitor.scraper.scrape_saved_items_once")
+    def test_scrape_saved_items_retries_infrastructure_error(self, scrape_saved_items_once):
+        scrape_saved_items_once.side_effect = [RuntimeError("Page.goto: Timeout 45000ms exceeded"), []]
+
+        self.assertEqual(scrape_saved_items(), [])
+
+        self.assertEqual(scrape_saved_items_once.call_count, 2)
+
+    @override_settings(AMAZON_SCRAPER_MAX_ATTEMPTS=2, AMAZON_SCRAPER_RETRY_DELAY_SECONDS=0)
+    @patch("monitor.scraper.scrape_saved_items_once")
+    def test_scrape_saved_items_does_not_retry_session_error(self, scrape_saved_items_once):
+        scrape_saved_items_once.side_effect = RuntimeError("La sesion de Amazon no es valida")
+
+        with self.assertRaisesMessage(RuntimeError, "sesion de Amazon"):
+            scrape_saved_items()
+
+        scrape_saved_items_once.assert_called_once()
