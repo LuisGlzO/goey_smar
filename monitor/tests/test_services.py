@@ -278,7 +278,7 @@ class MonitorSettingsTests(TestCase):
 
         MonitorRun.objects.all().delete()
         MonitorRun.objects.create(status=MonitorRun.Status.SUCCESS)
-        MonitorRun.objects.create(status=MonitorRun.Status.FAILED, error="Page.goto: Timeout 45000ms exceeded")
+        MonitorRun.objects.create(status=MonitorRun.Status.FAILED, error="stale_run_recovered: exceeded 10 minutes")
         MonitorRun.objects.create(status=MonitorRun.Status.FAILED, error="pthread_create: Resource temporarily unavailable")
 
         self.assertEqual(consecutive_infrastructure_failures(3), 2)
@@ -290,10 +290,10 @@ class MonitorSettingsTests(TestCase):
     @patch("monitor.services.os._exit")
     @patch("monitor.services.os.kill")
     @patch("monitor.services.os.getppid", return_value=123)
-    @patch("monitor.services.sys.argv", ["celery", "-A", "config", "worker"])
+    @patch.dict("monitor.services.os.environ", {"GOEY_CELERY_WORKER_PROCESS": "1"})
     def test_infrastructure_failures_request_worker_restart_inside_celery(self, getppid, kill, exit_process):
         MonitorRun.objects.create(status=MonitorRun.Status.FAILED, error="Page.goto: Timeout 45000ms exceeded")
-        MonitorRun.objects.create(status=MonitorRun.Status.FAILED, error="pthread_create: Resource temporarily unavailable")
+        MonitorRun.objects.create(status=MonitorRun.Status.FAILED, error="stale_run_recovered: exceeded 10 minutes")
 
         with self.assertLogs("monitor.services", level="ERROR"):
             request_worker_restart_after_infrastructure_failures()

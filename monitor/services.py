@@ -78,6 +78,8 @@ def send_monitor_failure_notifications(run, exc):
 
 
 def running_inside_celery_worker():
+    if os.getenv("GOEY_CELERY_WORKER_PROCESS") == "1":
+        return True
     args = " ".join(sys.argv).lower()
     return "celery" in args and "worker" in args
 

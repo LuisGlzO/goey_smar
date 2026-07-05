@@ -3,6 +3,7 @@ INFRASTRUCTURE_ERROR_TERMS = (
     "browsertype.launch_persistent_context",
     "target page, context or browser has been closed",
     "page.goto: timeout",
+    "stale_run_recovered",
     "timeout",
     "chrome-headless-shell",
 )
