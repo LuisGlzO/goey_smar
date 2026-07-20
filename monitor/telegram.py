@@ -1,4 +1,5 @@
 import html
+from time import perf_counter
 import traceback
 
 import requests
@@ -7,6 +8,11 @@ from django.utils import timezone
 
 from .amazon_creators import safe_get_product_content
 from .links import affiliate_url_for
+
+
+def _record_alert_timing(timing, product, name: str, seconds: float, **details) -> None:
+    if timing:
+        timing.record("alerts", name, seconds, asin=product.asin, **details)
 
 
 def send_telegram_message(
@@ -56,10 +62,18 @@ def send_telegram_photo(chat_id: str, photo_url: str, caption: str, bot_token: s
     return str(response.json().get("result", {}).get("message_id", ""))
 
 
-def send_product_alert(product, check) -> str:
+def send_product_alert(product, check, timing=None) -> str:
     if not settings.TELEGRAM_CHAT_ID:
         raise RuntimeError("TELEGRAM_CHAT_ID es obligatorio.")
+    started = perf_counter()
     creator_content = safe_get_product_content(product.asin)
+    _record_alert_timing(
+        timing,
+        product,
+        "creators_api",
+        perf_counter() - started,
+        found=bool(creator_content),
+    )
     product_name = creator_content.title if creator_content and creator_content.title else product.name
     product_url = (
         product.affiliate_url
@@ -71,8 +85,22 @@ def send_product_alert(product, check) -> str:
         f"{html.escape(product_url)}"
     )
     if creator_content and creator_content.image_url:
-        return send_telegram_photo(settings.TELEGRAM_CHAT_ID, creator_content.image_url, text)
-    return send_telegram_message(settings.TELEGRAM_CHAT_ID, text)
+        started = perf_counter()
+        try:
+            message_id = send_telegram_photo(settings.TELEGRAM_CHAT_ID, creator_content.image_url, text)
+            _record_alert_timing(timing, product, "telegram_photo", perf_counter() - started, status="success")
+            return message_id
+        except Exception:
+            _record_alert_timing(timing, product, "telegram_photo", perf_counter() - started, status="failed")
+            raise
+    started = perf_counter()
+    try:
+        message_id = send_telegram_message(settings.TELEGRAM_CHAT_ID, text)
+        _record_alert_timing(timing, product, "telegram_message", perf_counter() - started, status="success")
+        return message_id
+    except Exception:
+        _record_alert_timing(timing, product, "telegram_message", perf_counter() - started, status="failed")
+        raise
 
 
 def send_monitor_failure_alert(run, exc: Exception) -> str:

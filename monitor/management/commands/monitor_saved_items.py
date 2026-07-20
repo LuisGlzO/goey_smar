@@ -18,3 +18,14 @@ class Command(BaseCommand):
                 f"Ejecucion {run.pk}: {run.items_seen} elementos visibles en {duration:.2f}s. Estado: {run.status}."
             )
         )
+        timings = []
+        performance = run.performance or {}
+        for group in ("stages", "scraper", "alerts"):
+            for entry in performance.get(group, []):
+                timings.append((entry.get("seconds", 0), group, entry))
+        for seconds, group, entry in sorted(timings, reverse=True)[:8]:
+            details = ", ".join(
+                f"{key}={value}" for key, value in entry.items() if key not in {"name", "seconds"}
+            )
+            suffix = f" ({details})" if details else ""
+            self.stdout.write(f"  {group}.{entry.get('name')}: {seconds:.3f}s{suffix}")

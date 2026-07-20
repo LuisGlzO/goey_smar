@@ -197,6 +197,7 @@ class MonitorSettingsTests(TestCase):
         self.assertIsNotNone(stale.finished_at)
         self.assertEqual(run.status, MonitorRun.Status.SUCCESS)
         scrape_saved_items.assert_called_once()
+        self.assertIn("timing", scrape_saved_items.call_args.kwargs)
 
     @override_settings(MONITOR_RUNNING_STALE_MINUTES=10)
     def test_recover_stale_monitor_runs_returns_recovered_count(self):
@@ -223,6 +224,15 @@ class MonitorSettingsTests(TestCase):
         self.assertEqual(run.error, "captcha requerido")
         self.assertIsNotNone(run.finished_at)
         send_failure_notifications.assert_called_once_with(run, ANY)
+
+    @patch("monitor.services.scrape_saved_items", return_value=[])
+    def test_successful_monitor_stores_performance_breakdown(self, scrape_saved_items):
+        run = run_monitor()
+
+        self.assertEqual(run.status, MonitorRun.Status.SUCCESS)
+        self.assertIn("total_seconds", run.performance)
+        self.assertIn("stages", run.performance)
+        self.assertTrue(any(stage["name"] == "scrape_saved_items" for stage in run.performance["stages"]))
 
     @patch("monitor.services.send_monitor_failure_email", side_effect=RuntimeError("smtp caido"))
     @patch("monitor.services.send_monitor_failure_alert", side_effect=RuntimeError("telegram caido"))

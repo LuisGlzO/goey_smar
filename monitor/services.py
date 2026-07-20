@@ -12,6 +12,7 @@ from django.utils import timezone
 from .email import send_monitor_failure_email
 from .errors import is_infrastructure_error
 from .models import Alert, MonitorRun, MonitorSettings, Product, ProductCheck
+from .performance import MonitorPerformance
 from .scraper import scrape_saved_items
 from .telegram import send_monitor_failure_alert, send_product_alert
 
@@ -181,7 +182,7 @@ def alert_decision(product, check, now=None, monitor_settings=None):
 
 
 @transaction.atomic
-def process_item(run, product, item, monitor_settings=None):
+def process_item(run, product, item, monitor_settings=None, timing=None):
     check = ProductCheck.objects.create(
         run=run,
         product=product,
@@ -192,12 +193,13 @@ def process_item(run, product, item, monitor_settings=None):
         product_url=item.product_url,
         raw_text=item.raw_text,
     )
-    should_send, reason = alert_decision(product, check, monitor_settings=monitor_settings)
+    with timing.stage("alert_decision", group="alerts", asin=product.asin) if timing else _nullcontext():
+        should_send, reason = alert_decision(product, check, monitor_settings=monitor_settings)
     if not should_send:
         Alert.objects.create(product=product, product_check=check, status=Alert.Status.SKIPPED, reason=reason)
         return check
     try:
-        message_id = send_product_alert(product, check)
+        message_id = send_product_alert(product, check, timing=timing)
         Alert.objects.create(product=product, product_check=check, status=Alert.Status.SENT, reason=reason, details=message_id)
     except Exception as exc:
         Alert.objects.create(product=product, product_check=check, status=Alert.Status.FAILED, reason="telegram_error", details=str(exc))
@@ -214,32 +216,49 @@ def process_missing_product(run, product):
     Alert.objects.create(product=product, product_check=check, status=Alert.Status.SKIPPED, reason="not_visible")
 
 
+class _nullcontext:
+    def __enter__(self):
+        return None
+
+    def __exit__(self, exc_type, exc, traceback):
+        return False
+
+
 def run_monitor():
+    timing = MonitorPerformance()
     run, settings = start_monitor_run()
     if run.status == MonitorRun.Status.SKIPPED and run.error == "previous_run_still_running":
+        run.performance = timing.finish()
+        run.save(update_fields=("performance",))
         return run
     try:
-        pause_reason = monitor_pause_reason(settings)
+        with timing.stage("pause_check"):
+            pause_reason = monitor_pause_reason(settings)
         if pause_reason:
             run.status = MonitorRun.Status.SKIPPED
             run.error = pause_reason
             return run
 
-        items = scrape_saved_items()
-        products = {product.asin: product for product in Product.objects.filter(is_active=True)}
-        for item in items:
-            product = products.pop(item.asin, None)
-            if product:
-                process_item(run, product, item, settings)
-        for product in products.values():
-            process_missing_product(run, product)
+        with timing.stage("scrape_saved_items"):
+            items = scrape_saved_items(timing=timing)
+        with timing.stage("load_active_products"):
+            products = {product.asin: product for product in Product.objects.filter(is_active=True)}
+        with timing.stage("process_visible_items", item_count=len(items)):
+            for item in items:
+                product = products.pop(item.asin, None)
+                if product:
+                    process_item(run, product, item, settings, timing=timing)
+        with timing.stage("process_missing_products", product_count=len(products)):
+            for product in products.values():
+                process_missing_product(run, product)
         run.items_seen = len(items)
         run.status = MonitorRun.Status.SUCCESS
     except Exception as exc:
         run.status = MonitorRun.Status.FAILED
         run.error = str(exc)
         run.finished_at = timezone.now()
-        run.save(update_fields=("items_seen", "status", "error", "finished_at"))
+        run.performance = timing.finish()
+        run.save(update_fields=("items_seen", "status", "error", "finished_at", "performance"))
         send_monitor_failure_notifications(run, exc)
         if is_infrastructure_error(exc):
             request_worker_restart_after_infrastructure_failures()
@@ -247,5 +266,6 @@ def run_monitor():
     finally:
         if run.finished_at is None:
             run.finished_at = timezone.now()
-            run.save(update_fields=("items_seen", "status", "error", "finished_at"))
+            run.performance = timing.finish()
+            run.save(update_fields=("items_seen", "status", "error", "finished_at", "performance"))
     return run

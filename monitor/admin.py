@@ -27,10 +27,16 @@ class AlertAdmin(admin.ModelAdmin):
 
 @admin.register(MonitorRun)
 class MonitorRunAdmin(admin.ModelAdmin):
-    list_display = ("started_at", "finished_at", "status", "items_seen")
+    list_display = ("started_at", "finished_at", "status", "items_seen", "duration_seconds")
     list_filter = ("status",)
-    readonly_fields = ("started_at", "finished_at", "status", "items_seen", "error")
+    readonly_fields = ("started_at", "finished_at", "status", "items_seen", "duration_seconds", "performance", "error")
     actions = ("mark_running_as_failed",)
+
+    @admin.display(description="Duracion (s)")
+    def duration_seconds(self, obj):
+        if obj.finished_at:
+            return round((obj.finished_at - obj.started_at).total_seconds(), 2)
+        return ""
 
     @admin.action(description="Marcar ejecuciones en curso seleccionadas como fallidas")
     def mark_running_as_failed(self, request, queryset):

@@ -96,6 +96,7 @@ class MonitorRun(models.Model):
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.RUNNING)
     items_seen = models.PositiveIntegerField(default=0)
     error = models.TextField(blank=True)
+    performance = models.JSONField(default=dict, blank=True)
 
 
 class ProductCheck(models.Model):
