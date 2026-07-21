@@ -65,7 +65,10 @@ class AmazonCreatorsApiTests(SimpleTestCase):
                 "itemIdType": "ASIN",
                 "marketplace": "www.amazon.com.mx",
                 "partnerTag": "goeygeeks2023-20",
-                "resources": ["images.primary.large", "itemInfo.title"],
+                "resources": [
+                    "images.primary.large", "itemInfo.title",
+                    "offersV2.listings.availability", "offersV2.listings.price",
+                ],
                 "languagesOfPreference": ["es_MX"],
             },
             headers={

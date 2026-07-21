@@ -1,6 +1,7 @@
 import logging
 import time
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from urllib.parse import urlparse
 
 import requests
@@ -18,6 +19,8 @@ class CreatorProductContent:
     title: str
     image_url: str
     detail_page_url: str
+    available: bool | None = None
+    price: Decimal | None = None
 
 
 _token_cache = {"access_token": "", "expires_at": 0.0}
@@ -115,44 +118,87 @@ def _items_from_response(payload: dict) -> list[dict]:
     return container.get("items") or []
 
 
-def get_product_content(asin: str) -> CreatorProductContent | None:
-    if not creators_api_is_configured():
+def _primary_listing(item: dict) -> dict:
+    offers = item.get("offersV2") or item.get("offers") or {}
+    listings = offers.get("listings") or []
+    if isinstance(listings, dict):
+        listings = listings.get("listings") or listings.get("items") or []
+    return listings[0] if listings else {}
+
+
+def _listing_price(listing: dict) -> Decimal | None:
+    price = listing.get("price") or {}
+    money = price.get("money") or price
+    value = money.get("amount") or money.get("value")
+    if value is None:
+        return None
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
         return None
 
+
+def _listing_available(listing: dict) -> bool | None:
+    if not listing:
+        return False
+    availability = listing.get("availability") or {}
+    value = availability.get("type") or availability.get("value") or availability.get("displayValue")
+    if value is None:
+        return True if _listing_price(listing) is not None else None
+    normalized = str(value).lower().replace("_", " ")
+    if any(token in normalized for token in ("out of stock", "unavailable", "not available")):
+        return False
+    if any(token in normalized for token in ("in stock", "available", "now")):
+        return True
+    return None
+
+
+def get_products_content(asins: list[str]) -> dict[str, CreatorProductContent]:
+    if not creators_api_is_configured() or not asins:
+        return {}
+
     marketplace = settings.AMAZON_CREATORS_API_MARKETPLACE or _marketplace_from_base_url()
+    normalized_asins = list(dict.fromkeys(asin.strip().upper() for asin in asins if asin.strip()))
     request_payload = {
-        "itemIds": [asin],
+        "itemIds": normalized_asins,
         "itemIdType": "ASIN",
         "marketplace": marketplace,
         "partnerTag": settings.AMAZON_CREATORS_API_PARTNER_TAG,
-        "resources": ["images.primary.large", "itemInfo.title"],
+        "resources": [
+            "images.primary.large", "itemInfo.title", "offersV2.listings.availability",
+            "offersV2.listings.price",
+        ],
     }
     if settings.AMAZON_CREATORS_API_LANGUAGES:
         request_payload["languagesOfPreference"] = settings.AMAZON_CREATORS_API_LANGUAGES
 
-    access_token = get_access_token()
     response = requests.post(
         f"{settings.AMAZON_CREATORS_API_BASE_URL}/catalog/v1/getItems",
         json=request_payload,
         headers={
-            "Authorization": _authorization_header(access_token),
+            "Authorization": _authorization_header(get_access_token()),
             "Content-Type": "application/json",
             "x-marketplace": marketplace,
         },
         timeout=settings.AMAZON_CREATORS_API_TIMEOUT_SECONDS,
     )
     response.raise_for_status()
-
-    asin = asin.upper()
+    results = {}
     for item in _items_from_response(response.json()):
-        if item.get("asin", "").upper() != asin:
+        asin = item.get("asin", "").upper()
+        if asin not in normalized_asins:
             continue
-        return CreatorProductContent(
-            title=_title(item),
-            image_url=_first_image_url(item),
+        listing = _primary_listing(item)
+        results[asin] = CreatorProductContent(
+            title=_title(item), image_url=_first_image_url(item),
             detail_page_url=item.get("detailPageURL") or "",
+            available=_listing_available(listing), price=_listing_price(listing),
         )
-    return None
+    return results
+
+
+def get_product_content(asin: str) -> CreatorProductContent | None:
+    return get_products_content([asin]).get(asin.upper())
 
 
 def safe_get_product_content(asin: str) -> CreatorProductContent | None:

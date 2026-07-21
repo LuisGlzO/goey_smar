@@ -57,7 +57,7 @@ ejecute:
 En Docker/produccion:
 
 ```bash
-docker compose -f docker-compose.prod.yml exec worker python manage.py test_error_alert_channel --message "prueba manual"
+docker compose -f docker-compose.prod.yml exec web python manage.py test_error_alert_channel --message "prueba manual"
 ```
 
 Use Python 3.12 x64 para instalaciones locales en Windows. Si aparece
@@ -87,7 +87,7 @@ y presione Enter en la terminal. No comparta ni agregue el perfil generado al
 repositorio.
 
 Para servidor o Docker, genere el perfil en un entorno gráfico autorizado y
-móntelo exclusivamente en el worker como `/app/amazon-profile`. Amazon puede
+móntelo exclusivamente en `worker_scraper` como `/app/amazon-profile`. Amazon puede
 invalidar sesiones o solicitar CAPTCHA; en ese caso hay que repetir este paso.
 
 ## 3. Productos
@@ -178,20 +178,33 @@ Esta modalidad reutiliza directamente la sesión creada por
 docker compose up -d db redis
 ```
 
-Después abra dos terminales. En la primera ejecute el worker:
+Después abra tres terminales. En la primera ejecute el worker del scraper:
 
 ```powershell
-.\scripts\celery.ps1 -A config worker -l INFO --pool=solo
+.\scripts\celery.ps1 -A config worker -l INFO --pool=solo -Q scraper -n scraper@%h
 ```
 
-En la segunda ejecute el programador:
+En la segunda ejecute el worker de Creators API:
+
+```powershell
+.\scripts\celery.ps1 -A config worker -l INFO --pool=solo -Q creators_api -n creators_api@%h
+```
+
+En la tercera ejecute el programador:
 
 ```powershell
 .\scripts\celery.ps1 -A config beat -l INFO
 ```
 
-Celery Beat agenda una revisión según `MONITOR_INTERVAL_SECONDS`; Redis entrega
-la tarea y el worker ejecuta Playwright, registra resultados y envía Telegram.
+Antes de este cambio, el worker local sin `-Q` consumía la cola predeterminada.
+Ciérrelo y use los dos comandos anteriores; no debe mantenerse una cuarta
+terminal con el comando antiguo.
+
+Celery Beat agenda ambos motores según sus intervalos. Redis entrega el scraper a
+la cola `scraper` y la API a `creators_api`, por lo que los dos workers pueden
+ejecutarse al mismo tiempo y solicitar alertas al servicio central compartido.
+Si el scraper pierde la sesión de Amazon, Creators API puede continuar trabajando
+si su worker, Beat, Redis y PostgreSQL permanecen activos.
 Las tareas publicadas por Beat expiran segun `MONITOR_TASK_EXPIRES_SECONDS`, por
 lo que si una corrida tarda demasiado no se acumulan revisiones viejas para
 ejecutarse inmediatamente despues.
@@ -240,7 +253,8 @@ Playwright.
 
 ### Solape de ejecuciones
 
-Si una ejecucion sigue en estado `running` cuando entra otra, la nueva se
+Si una ejecucion del mismo `worker_key` sigue en estado `running` cuando entra
+otra, la nueva se
 registra como `Omitido` con razon `previous_run_still_running`. Esto evita que
 dos scrapers usen simultaneamente el mismo perfil de Amazon. La variable
 `MONITOR_RUNNING_STALE_MINUTES` define cuanto tiempo se considera valida una
@@ -257,27 +271,30 @@ Para recuperar manualmente ejecuciones viejas que ya quedaron en `running`:
 En Docker/produccion:
 
 ```bash
-docker compose -f docker-compose.prod.yml exec worker python manage.py recover_stale_monitor_runs
+docker compose -f docker-compose.prod.yml exec web python manage.py recover_stale_monitor_runs
 ```
 
 Si el proceso real del worker tambien quedo colgado, reinicie el servicio:
 
 ```bash
-docker compose -f docker-compose.prod.yml restart worker
+docker compose -f docker-compose.prod.yml restart worker_scraper
 ```
 
 ## 7. Docker Compose
 
-`docker-compose.yml` describe cinco servicios relacionados:
+`docker-compose.yml` describe seis servicios relacionados:
 
 - `db`: PostgreSQL, almacena productos, verificaciones y alertas.
-- `redis`: cola que comunica Beat con el worker.
+- `redis`: aloja las colas `scraper` y `creators_api`.
 - `web`: Django Admin servido por Gunicorn.
 - `beat`: programa verificaciones periódicas.
-- `worker`: ejecuta cada verificación.
+- `worker_scraper`: consume exclusivamente la cola Playwright y monta el perfil.
+- `worker_creators`: consume exclusivamente la cola de Creators API.
 
 `docker compose up -d db redis` inicia únicamente base y cola. `docker compose up
---build -d` intenta iniciar los cinco servicios.
+--build -d` intenta iniciar los seis servicios.
+En producción, `docker compose -f docker-compose.prod.yml up -d --build` crea o
+actualiza automáticamente ambos workers; no es necesario iniciarlos por separado.
 
 La ejecución completamente dentro de Docker requiere preparar una sesión de
 Amazon compatible dentro del volumen `amazon_profile`. Una sesión creada por el
@@ -293,12 +310,38 @@ primera disponibilidad, una reposición, una reducción significativa o ya termi
 el cooldown. Se aplican además el límite diario y la prevención de duplicados
 durante cooldown.
 
-## 9. Incidentes
+## 9. Monitores y alertas manuales
+
+El sistema ejecuta dos motores independientes: Playwright y Creators API. Ambos
+registran verificaciones y solicitan el envío al mismo servicio central, por lo
+que comparten cooldown anti-falso-restock, cooldown por producto y límite diario.
+Configure la tarea API con `AMAZON_CREATORS_API_INTERVAL_SECONDS`,
+`AMAZON_CREATORS_API_BATCH_SIZE` y `AMAZON_CREATORS_API_BATCH_DELAY_SECONDS`.
+
+El panel web está disponible en `/` para usuarios de Django autenticados. Asigne
+el permiso `monitor.send_manual_alert` al usuario o grupo que podrá abrir
+`/alertas/` y publicar alertas manuales. Estas solicitudes no validan precio ni
+stock, pero siempre respetan ambos cooldowns y el límite diario.
+
+## 10. Gestión de productos
+
+El módulo `/productos/` permite consultar, crear y editar productos fuera de
+Django Admin. Asigne al grupo del cliente los permisos estándar
+`monitor.view_product`, `monitor.add_product` y `monitor.change_product`. El
+último habilita también la actualización masiva de cooldown y límite diario.
+
+La fotografía se guarda como una URL devuelta por Creators API y se refresca
+durante el monitor automático. No se almacenan archivos en el servidor, por lo
+que no se requiere `MEDIA_ROOT`, un volumen Docker adicional ni DigitalOcean
+Spaces. Después del despliegue, los productos existentes obtendrán su imagen en
+la siguiente ejecución exitosa del monitor API.
+
+## 11. Incidentes
 
 - Ejecución fallida por sesión: regenere la sesión de Amazon.
 - `pthread_create: Resource temporarily unavailable`: el contenedor o Droplet se
   quedo sin hilos/procesos o memoria mientras Chromium arrancaba. Reinicie
-  `worker`, revise `docker stats`, `free -h`, `ps -eLf | wc -l` y considere subir
+  `worker_scraper`, revise `docker stats`, `free -h`, `ps -eLf | wc -l` y considere subir
   RAM si se repite. El worker tambien intenta auto-recuperarse si el error se
   repite varias veces consecutivas.
 - Selectores sin resultados: inspeccione cambios visuales de Amazon y ajuste

@@ -7,8 +7,6 @@ from time import perf_counter
 from urllib.parse import urljoin
 
 from django.conf import settings
-from playwright.sync_api import sync_playwright
-
 from .errors import is_infrastructure_error
 
 
@@ -201,6 +199,8 @@ def cleanup_chromium_profile_locks(profile_dir: str) -> None:
 
 
 def scrape_saved_items_once(headless: bool, timing=None) -> list[ScrapedItem]:
+    from playwright.sync_api import sync_playwright
+
     with timing.stage("cleanup_chromium_locks", group="scraper") if timing else _nullcontext():
         cleanup_chromium_profile_locks(settings.AMAZON_PROFILE_DIR)
     with sync_playwright() as playwright:

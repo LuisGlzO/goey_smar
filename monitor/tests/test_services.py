@@ -7,7 +7,7 @@ from django.test import TestCase, override_settings
 from django.utils import timezone
 
 from monitor.email import send_monitor_failure_email
-from monitor.models import Alert, MonitorRun, MonitorSettings, Product, ProductCheck
+from monitor.models import Alert, MonitorRun, MonitorSettings, ObservationSource, Product, ProductCheck
 from monitor.scraper import ScrapedItem
 from monitor.services import (
     alert_decision,
@@ -292,6 +292,27 @@ class MonitorSettingsTests(TestCase):
         MonitorRun.objects.create(status=MonitorRun.Status.FAILED, error="pthread_create: Resource temporarily unavailable")
 
         self.assertEqual(consecutive_infrastructure_failures(3), 2)
+
+    def test_creators_runs_do_not_interrupt_scraper_failure_streak(self):
+        MonitorRun.objects.create(
+            source=ObservationSource.SCRAPER,
+            worker_key="scraper:default",
+            status=MonitorRun.Status.FAILED,
+            error="Page.goto: Timeout 45000ms exceeded",
+        )
+        MonitorRun.objects.create(
+            source=ObservationSource.CREATORS_API,
+            worker_key="creators_api:default",
+            status=MonitorRun.Status.SUCCESS,
+        )
+        MonitorRun.objects.create(
+            source=ObservationSource.SCRAPER,
+            worker_key="scraper:default",
+            status=MonitorRun.Status.FAILED,
+            error="pthread_create: Resource temporarily unavailable",
+        )
+
+        self.assertEqual(consecutive_infrastructure_failures(2), 2)
 
     @override_settings(
         MONITOR_INFRASTRUCTURE_FAILURE_RESTART_THRESHOLD=2,

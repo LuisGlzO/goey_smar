@@ -1,0 +1,13 @@
+{% extends "monitor/base.html" %}
+{% block title %}{% if product %}Editar{% else %}Nuevo{% endif %} producto | Goey SMAR{% endblock %}
+{% block content %}
+<div class="page-heading"><div><a class="back" href="{% url 'products' %}">← Productos</a><h1>{% if product %}Editar producto{% else %}Nuevo producto{% endif %}</h1><p>Configura los datos y reglas usadas por los motores de monitoreo.</p></div></div>
+<div class="editor-layout">
+  <form method="post" class="editor-card">{% csrf_token %}
+    {% if form.non_field_errors %}<div class="message error">{{ form.non_field_errors }}</div>{% endif %}
+    <div class="form-grid">{% for field in form %}<div class="field {% if field.name == 'affiliate_url' or field.name == 'name' %}wide{% endif %} {% if field.field.widget.input_type == 'checkbox' %}checkbox-field{% endif %}"><label for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}{% if field.help_text %}<small>{{ field.help_text }}</small>{% endif %}{% for error in field.errors %}<span class="field-error">{{ error }}</span>{% endfor %}</div>{% endfor %}</div>
+    <div class="form-actions"><a class="secondary button-link" href="{% url 'products' %}">Cancelar</a><button class="primary" type="submit">Guardar producto</button></div>
+  </form>
+  <aside class="image-preview-card"><span class="catalog-image large"><span>{% if product %}{{ product.name|slice:":2"|upper }}{% else %}AM{% endif %}</span>{% if product.image_url %}<img src="{{ product.image_url }}" alt="Fotografía de {{ product.name }}" onerror="this.remove()">{% endif %}</span><h3>Fotografía de Amazon</h3><p>Se obtiene automáticamente desde Creators API al guardar el producto.</p>{% if product.image_refreshed_at %}<small>Actualizada: {{ product.image_refreshed_at|date:"d/m/Y H:i" }}</small>{% endif %}</aside>
+</div>
+{% endblock %}

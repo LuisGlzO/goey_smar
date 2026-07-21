@@ -1,6 +1,12 @@
 from django.db import models
 
 
+class ObservationSource(models.TextChoices):
+    SCRAPER = "scraper", "Scraper"
+    CREATORS_API = "creators_api", "Creators API"
+    MANUAL = "manual", "Manual"
+
+
 class Product(models.Model):
     class Priority(models.IntegerChoices):
         LOW = 10, "Baja"
@@ -14,6 +20,8 @@ class Product(models.Model):
         blank=True,
         help_text="Opcional. Tiene prioridad sobre el tag global de afiliado.",
     )
+    image_url = models.URLField(max_length=2000, blank=True)
+    image_refreshed_at = models.DateTimeField(null=True, blank=True)
     max_price = models.DecimalField(max_digits=12, decimal_places=2)
     priority = models.IntegerField(choices=Priority.choices, default=Priority.NORMAL)
     is_active = models.BooleanField(default=True)
@@ -92,6 +100,8 @@ class MonitorRun(models.Model):
         SKIPPED = "skipped", "Omitido"
 
     started_at = models.DateTimeField(auto_now_add=True)
+    source = models.CharField(max_length=20, choices=ObservationSource.choices, default=ObservationSource.SCRAPER)
+    worker_key = models.CharField(max_length=100, default="scraper:default", db_index=True)
     finished_at = models.DateTimeField(null=True, blank=True)
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.RUNNING)
     items_seen = models.PositiveIntegerField(default=0)
@@ -105,8 +115,12 @@ class ProductCheck(models.Model):
         UNAVAILABLE = "unavailable", "No disponible"
         UNKNOWN = "unknown", "Desconocido"
 
-    run = models.ForeignKey(MonitorRun, on_delete=models.CASCADE, related_name="checks")
+    run = models.ForeignKey(MonitorRun, null=True, blank=True, on_delete=models.CASCADE, related_name="checks")
     product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name="checks")
+    source = models.CharField(max_length=20, choices=ObservationSource.choices, default=ObservationSource.SCRAPER)
+    requested_by = models.ForeignKey(
+        "auth.User", null=True, blank=True, on_delete=models.SET_NULL, related_name="manual_product_checks"
+    )
     checked_at = models.DateTimeField(auto_now_add=True)
     availability = models.CharField(max_length=12, choices=Availability.choices)
     price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
@@ -122,17 +136,24 @@ class ProductCheck(models.Model):
 
 class Alert(models.Model):
     class Status(models.TextChoices):
+        PROCESSING = "processing", "Procesando"
         SENT = "sent", "Enviada"
         SKIPPED = "skipped", "Omitida"
         FAILED = "failed", "Fallida"
 
     product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name="alerts")
     product_check = models.ForeignKey(ProductCheck, on_delete=models.CASCADE, related_name="alerts")
+    source = models.CharField(max_length=20, choices=ObservationSource.choices, default=ObservationSource.SCRAPER)
+    requested_by = models.ForeignKey(
+        "auth.User", null=True, blank=True, on_delete=models.SET_NULL, related_name="requested_alerts"
+    )
     created_at = models.DateTimeField(auto_now_add=True)
-    status = models.CharField(max_length=8, choices=Status.choices)
+    status = models.CharField(max_length=12, choices=Status.choices)
+    reservation_expires_at = models.DateTimeField(null=True, blank=True)
     reason = models.CharField(max_length=80)
     details = models.TextField(blank=True)
 
     class Meta:
         ordering = ("-created_at",)
         indexes = [models.Index(fields=("product", "-created_at"))]
+        permissions = [("send_manual_alert", "Puede enviar alertas manuales")]

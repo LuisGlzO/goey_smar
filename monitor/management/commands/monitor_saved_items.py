@@ -23,7 +23,11 @@ class Command(BaseCommand):
         for group in ("stages", "scraper", "alerts"):
             for entry in performance.get(group, []):
                 timings.append((entry.get("seconds", 0), group, entry))
-        for seconds, group, entry in sorted(timings, reverse=True)[:8]:
+        for seconds, group, entry in sorted(
+            timings,
+            key=lambda timing: timing[0],
+            reverse=True,
+        )[:8]:
             details = ", ".join(
                 f"{key}={value}" for key, value in entry.items() if key not in {"name", "seconds"}
             )

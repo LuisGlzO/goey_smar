@@ -1,0 +1,28 @@
+{% load static %}
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Goey SMAR{% endblock %}</title>
+  <link rel="stylesheet" href="{% static 'monitor/app.css' %}?v=20260720-3">
+  {% block extra_head %}{% endblock %}
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand-cluster"><span class="brand-mark">GS</span><a class="brand" href="{% url 'dashboard' %}">Goey SMAR<small>Stock Monitor & Alerting</small></a></div>
+    {% if user.is_authenticated %}
+      <div class="session">
+        <button class="theme-switch" type="button" data-theme-toggle aria-label="Cambiar tema"><span>◐</span></button>
+        <div class="user-chip"><span class="avatar">{{ user.get_username|slice:":1"|upper }}</span><span class="user-copy"><strong>{{ user.get_username }}</strong><small>Sesión activa</small></span></div>
+        <form method="post" action="{% url 'logout' %}">{% csrf_token %}<button class="logout-button">Cerrar sesión</button></form>
+      </div>
+    {% endif %}
+  </header>
+  <main class="container">
+    {% for message in messages %}<div class="message {{ message.tags }}">{{ message }}</div>{% endfor %}
+    {% block content %}{% endblock %}
+  </main>
+  <script src="{% static 'monitor/app.js' %}?v=20260720-3"></script>
+</body>
+</html>

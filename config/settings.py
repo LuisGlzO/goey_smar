@@ -62,20 +62,29 @@ if os.getenv("USE_SQLITE", "false").lower() != "true" and os.getenv("POSTGRES_DB
         }
     }
 else:
-    DATABASES = {"default": {"ENGINE": "django.db.backends.sqlite3", "NAME": BASE_DIR / "db.sqlite3"}}
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": os.getenv("SQLITE_DB_PATH", str(BASE_DIR / "db.sqlite3")),
+        }
+    }
 
 AUTH_PASSWORD_VALIDATORS = []
 LANGUAGE_CODE = "es-mx"
 TIME_ZONE = os.getenv("TZ", "America/Mexico_City")
 USE_I18N = True
 USE_TZ = True
-STATIC_URL = "static/"
+STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
+WHITENOISE_USE_FINDERS = True
 STORAGES = {
     "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
     "staticfiles": {"BACKEND": "whitenoise.storage.CompressedStaticFilesStorage"},
 }
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+LOGIN_URL = "login"
+LOGIN_REDIRECT_URL = "dashboard"
+LOGOUT_REDIRECT_URL = "login"
 
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 SESSION_COOKIE_SECURE = os.getenv("DJANGO_SESSION_COOKIE_SECURE", "false").lower() == "true"
@@ -83,6 +92,10 @@ CSRF_COOKIE_SECURE = os.getenv("DJANGO_CSRF_COOKIE_SECURE", "false").lower() == 
 
 CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")
 CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", CELERY_BROKER_URL)
+CELERY_TASK_ROUTES = {
+    "monitor.tasks.monitor_saved_items": {"queue": "scraper"},
+    "monitor.tasks.monitor_creators_api": {"queue": "creators_api"},
+}
 MONITOR_INTERVAL_SECONDS = int(os.getenv("MONITOR_INTERVAL_SECONDS", "120"))
 MONITOR_TASK_EXPIRES_SECONDS = int(os.getenv("MONITOR_TASK_EXPIRES_SECONDS", str(MONITOR_INTERVAL_SECONDS)))
 MONITOR_TASK_TIME_LIMIT_SECONDS = int(os.getenv("MONITOR_TASK_TIME_LIMIT_SECONDS", "240"))
@@ -94,8 +107,16 @@ CELERY_BEAT_SCHEDULE = {
     "monitor-saved-items": {
         "task": "monitor.tasks.monitor_saved_items",
         "schedule": MONITOR_INTERVAL_SECONDS,
-        "options": {"expires": MONITOR_TASK_EXPIRES_SECONDS},
-    }
+        "options": {"queue": "scraper", "expires": MONITOR_TASK_EXPIRES_SECONDS},
+    },
+    "monitor-creators-api": {
+        "task": "monitor.tasks.monitor_creators_api",
+        "schedule": int(os.getenv("AMAZON_CREATORS_API_INTERVAL_SECONDS", "120")),
+        "options": {
+            "queue": "creators_api",
+            "expires": int(os.getenv("AMAZON_CREATORS_API_TASK_EXPIRES_SECONDS", "120")),
+        },
+    },
 }
 
 AMAZON_SAVED_ITEMS_URL = os.getenv("AMAZON_SAVED_ITEMS_URL", "https://www.amazon.com.mx/gp/cart/view.html")
@@ -114,6 +135,12 @@ AMAZON_CREATORS_API_LANGUAGES = [
     if item.strip()
 ]
 AMAZON_CREATORS_API_TIMEOUT_SECONDS = int(os.getenv("AMAZON_CREATORS_API_TIMEOUT_SECONDS", "5"))
+AMAZON_CREATORS_API_BATCH_SIZE = int(os.getenv("AMAZON_CREATORS_API_BATCH_SIZE", "10"))
+AMAZON_CREATORS_API_BATCH_DELAY_SECONDS = float(os.getenv("AMAZON_CREATORS_API_BATCH_DELAY_SECONDS", "1"))
+AMAZON_CREATORS_API_MAX_ATTEMPTS = int(os.getenv("AMAZON_CREATORS_API_MAX_ATTEMPTS", "2"))
+AMAZON_CREATORS_API_RETRY_DELAY_SECONDS = float(os.getenv("AMAZON_CREATORS_API_RETRY_DELAY_SECONDS", "1"))
+AMAZON_CREATORS_API_TASK_TIME_LIMIT_SECONDS = int(os.getenv("AMAZON_CREATORS_API_TASK_TIME_LIMIT_SECONDS", "120"))
+ALERT_RESERVATION_SECONDS = int(os.getenv("ALERT_RESERVATION_SECONDS", "90"))
 AMAZON_PROFILE_DIR = os.getenv("AMAZON_PROFILE_DIR", str(BASE_DIR / ".amazon-profile"))
 AMAZON_HEADLESS = os.getenv("AMAZON_HEADLESS", "true").lower() == "true"
 AMAZON_TIMEOUT_MS = int(os.getenv("AMAZON_TIMEOUT_MS", "45000"))

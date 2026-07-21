@@ -62,18 +62,19 @@ def send_telegram_photo(chat_id: str, photo_url: str, caption: str, bot_token: s
     return str(response.json().get("result", {}).get("message_id", ""))
 
 
-def send_product_alert(product, check, timing=None) -> str:
+def send_product_alert(product, check, timing=None, creator_content=None) -> str:
     if not settings.TELEGRAM_CHAT_ID:
         raise RuntimeError("TELEGRAM_CHAT_ID es obligatorio.")
-    started = perf_counter()
-    creator_content = safe_get_product_content(product.asin)
-    _record_alert_timing(
-        timing,
-        product,
-        "creators_api",
-        perf_counter() - started,
-        found=bool(creator_content),
-    )
+    if creator_content is None:
+        started = perf_counter()
+        creator_content = safe_get_product_content(product.asin)
+        _record_alert_timing(
+            timing,
+            product,
+            "creators_api",
+            perf_counter() - started,
+            found=bool(creator_content),
+        )
     product_name = creator_content.title if creator_content and creator_content.title else product.name
     product_url = (
         product.affiliate_url

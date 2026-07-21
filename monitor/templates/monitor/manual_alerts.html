@@ -1,0 +1,31 @@
+{% extends "monitor/base.html" %}
+{% load static %}
+{% block title %}Alertas manuales | Goey SMAR{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'monitor/manual-alerts.css' %}?v=2">{% endblock %}
+{% block content %}
+<div class="page-heading"><div><a class="back" href="{% url 'dashboard' %}">← Centro de herramientas</a><h1>Alertas manuales</h1><p>Selecciona un producto para revisar y confirmar el envío a Telegram.</p></div><span class="count">{{ rows|length }} productos activos</span></div>
+<form method="get" class="search"><input name="q" value="{{ query }}" placeholder="Buscar por nombre o ASIN" aria-label="Buscar productos"><button class="secondary" type="submit">Buscar</button></form>
+<div class="product-grid">
+{% for row in rows %}
+  <button class="product-alert-card" type="button" data-product-card data-name="{{ row.product.name }}" data-asin="{{ row.product.asin }}" data-status="{{ row.cooldown.label }}" data-action="{% url 'send_manual_alert' row.product.pk %}">
+    <span class="alert-card-media">
+      <span class="alert-image-fallback">{{ row.product.name|slice:":2"|upper }}</span>
+      {% if row.product.image_url %}<img src="{{ row.product.image_url }}" alt="" loading="lazy" onerror="this.remove()">{% endif %}
+    </span>
+    <span class="alert-card-body">
+      <span class="simple-card-status"><span class="status {% if row.cooldown.blocked %}blocked{% else %}ready{% endif %}">{{ row.cooldown.label }}</span></span>
+      <strong class="simple-card-name">{{ row.product.name }}</strong>
+      <span class="simple-card-action-row"><span class="simple-card-action">Enviar alerta <b>→</b></span></span>
+    </span>
+  </button>
+{% empty %}<div class="empty-card">No hay productos activos que coincidan con la búsqueda.</div>{% endfor %}
+</div>
+<dialog id="alert-dialog" aria-labelledby="modal-title">
+  <div class="modal-body">
+    <div class="modal-head"><div><span class="eyebrow">Confirmación</span><h2 id="modal-title">Enviar alerta</h2></div><button type="button" class="modal-close" data-modal-close aria-label="Cerrar">×</button></div>
+    <div class="modal-product"><span class="product-avatar">↗</span><span><strong data-modal-name></strong><span data-modal-asin></span><span data-modal-status></span></span></div>
+    <p class="modal-note">La solicitud pasará por el cooldown anti-falso-restock, el cooldown del producto y el límite diario antes de publicarse.</p>
+    <form method="post">{% csrf_token %}<div class="modal-actions"><button class="secondary" type="button" data-modal-close>Cancelar</button><button class="primary" type="submit" onclick="this.disabled=true;this.form.submit()">Confirmar y enviar</button></div></form>
+  </div>
+</dialog>
+{% endblock %}

@@ -1,0 +1,15 @@
+{% extends "monitor/base.html" %}
+{% block title %}Iniciar sesión | Goey SMAR{% endblock %}
+{% block content %}
+<section class="login-card">
+  <h1>Iniciar sesión</h1>
+  <p>Accede al panel de monitoreo y alertas.</p>
+  {% if form.errors %}<div class="message error">Usuario o contraseña incorrectos.</div>{% endif %}
+  <form method="post" class="stack">{% csrf_token %}
+    <label for="id_username">Usuario</label>{{ form.username }}
+    <label for="id_password">Contraseña</label>{{ form.password }}
+    {% if next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
+    <button class="primary" type="submit">Entrar</button>
+  </form>
+</section>
+{% endblock %}

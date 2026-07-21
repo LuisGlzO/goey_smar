@@ -114,6 +114,19 @@ Levante los servicios:
 docker compose -f docker-compose.prod.yml up -d --build
 ```
 
+Este único comando levanta Beat y los workers dedicados `worker_scraper` y
+`worker_creators`. Cada uno consume exclusivamente su cola y ambos pueden correr
+en paralelo.
+
+Al actualizar una instalación que todavía tenga el antiguo servicio único
+`worker`, use una sola vez `--remove-orphans` para retirar ese contenedor:
+
+```bash
+docker compose -f docker-compose.prod.yml up -d --build --remove-orphans
+```
+
+Las actualizaciones posteriores pueden volver al comando habitual sin esa opción.
+
 Crear superusuario:
 
 ```bash
@@ -123,7 +136,7 @@ docker compose -f docker-compose.prod.yml exec web python manage.py createsuperu
 Validar el canal tecnico de errores de Telegram:
 
 ```bash
-docker compose -f docker-compose.prod.yml exec worker python manage.py test_error_alert_channel --message "deploy smoke test"
+docker compose -f docker-compose.prod.yml exec web python manage.py test_error_alert_channel --message "deploy smoke test"
 ```
 
 Abrir:
@@ -187,7 +200,8 @@ debe ser la entrada publica.
 docker compose -f docker-compose.prod.yml ps
 docker compose -f docker-compose.prod.yml logs -f proxy
 docker compose -f docker-compose.prod.yml logs -f web
-docker compose -f docker-compose.prod.yml logs -f worker
+docker compose -f docker-compose.prod.yml logs -f worker_scraper
+docker compose -f docker-compose.prod.yml logs -f worker_creators
 docker compose -f docker-compose.prod.yml logs -f beat
 ```
 
@@ -204,7 +218,7 @@ Fuera del horario permitido, la tarea queda como `Omitido` y no abre Amazon.
 
 ## 8. Sesion de Amazon
 
-El worker usa el volumen Docker `amazon_profile` montado en
+El servicio `worker_scraper` usa el volumen Docker `amazon_profile` montado en
 `/app/amazon-profile`. La sesion debe crearse en un ambiente compatible con el
 Chromium Linux que usa el contenedor.
 
@@ -219,7 +233,7 @@ renovar la sesion.
 
 ### Iniciar o renovar sesion con noVNC temporal
 
-Use este flujo cuando `worker` muestre errores como:
+Use este flujo cuando `worker_scraper` muestre errores como:
 
 ```text
 La sesion de Amazon no es valida; ejecute init_amazon_session.
@@ -238,13 +252,17 @@ ssh -L 6080:127.0.0.1:6080 root@SERVER_PUBLIC_IP
 
 ```bash
 cd ~/goey_smar
-docker compose -f docker-compose.prod.yml stop beat worker
+docker compose -f docker-compose.prod.yml stop beat worker_scraper
 ```
+
+Al detener Beat no se publican nuevas rondas de ninguno de los motores. El worker
+de Creators API no usa el perfil de Chromium y puede permanecer levantado durante
+la renovación; cualquier tarea ya encolada conserva su expiración configurada.
 
 3. Limpie locks anteriores del perfil de Chromium:
 
 ```bash
-docker compose -f docker-compose.prod.yml run --rm worker sh -lc '
+docker compose -f docker-compose.prod.yml run --rm worker_scraper sh -lc '
 rm -f /app/amazon-profile/SingletonLock \
       /app/amazon-profile/SingletonSocket \
       /app/amazon-profile/SingletonCookie \
@@ -255,7 +273,7 @@ rm -f /app/amazon-profile/SingletonLock \
 4. Levante el navegador temporal con noVNC:
 
 ```bash
-docker compose -f docker-compose.prod.yml run --rm --publish 127.0.0.1:6080:6080 worker sh -lc '
+docker compose -f docker-compose.prod.yml run --rm --publish 127.0.0.1:6080:6080 worker_scraper sh -lc '
 set -e
 apt-get update
 apt-get install -y --no-install-recommends xvfb fluxbox x11vnc novnc websockify x11-utils
@@ -297,8 +315,8 @@ http://127.0.0.1:6080/vnc.html?autoconnect=true&resize=scale
 7. Pruebe una ejecucion manual:
 
 ```bash
-docker compose -f docker-compose.prod.yml start worker
-docker compose -f docker-compose.prod.yml exec worker python manage.py monitor_saved_items
+docker compose -f docker-compose.prod.yml start worker_scraper
+docker compose -f docker-compose.prod.yml exec worker_scraper python manage.py monitor_saved_items
 ```
 
 Si responde con `Ejecucion X: N elementos visibles`, reactive la agenda:
@@ -310,7 +328,8 @@ docker compose -f docker-compose.prod.yml start beat
 8. Revise logs y admin:
 
 ```bash
-docker compose -f docker-compose.prod.yml logs --tail=80 worker
+docker compose -f docker-compose.prod.yml logs --tail=80 worker_scraper
+docker compose -f docker-compose.prod.yml logs --tail=80 worker_creators
 docker compose -f docker-compose.prod.yml logs --tail=80 beat
 ```
 
@@ -318,8 +337,8 @@ En Django Admin revise `Monitor runs`, `Product checks` y `Alerts`.
 Si quedo una ejecucion antigua en `En ejecucion`, puede cerrarla con:
 
 ```bash
-docker compose -f docker-compose.prod.yml exec worker python manage.py recover_stale_monitor_runs
-docker compose -f docker-compose.prod.yml restart worker
+docker compose -f docker-compose.prod.yml exec web python manage.py recover_stale_monitor_runs
+docker compose -f docker-compose.prod.yml restart worker_scraper
 ```
 
 Si el navegador falla indicando que el perfil esta en uso, repita los pasos 2 y

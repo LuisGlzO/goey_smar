@@ -39,7 +39,7 @@ services:
       redis:
         condition: service_started
 
-  worker:
+  worker_scraper:
     build: .
     env_file: .env
     environment:
@@ -48,9 +48,24 @@ services:
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/0
       AMAZON_PROFILE_DIR: /app/amazon-profile
-    command: celery -A config worker -l INFO --concurrency=1
+    command: celery -A config worker -l INFO --concurrency=1 --prefetch-multiplier=1 -Q scraper -n scraper@%h
     volumes:
       - amazon_profile:/app/amazon-profile
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  worker_creators:
+    build: .
+    env_file: .env
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+    command: celery -A config worker -l INFO --concurrency=1 --prefetch-multiplier=1 -Q creators_api -n creators_api@%h
     depends_on:
       db:
         condition: service_healthy
