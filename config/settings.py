@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
+from django.core.exceptions import ImproperlyConfigured
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
@@ -93,7 +94,7 @@ CSRF_COOKIE_SECURE = os.getenv("DJANGO_CSRF_COOKIE_SECURE", "false").lower() == 
 CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")
 CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", CELERY_BROKER_URL)
 CELERY_TASK_ROUTES = {
-    "monitor.tasks.monitor_saved_items": {"queue": "scraper"},
+    "monitor.tasks.monitor_saved_items": {"queue": "scraper_amazon_a"},
     "monitor.tasks.monitor_creators_api": {"queue": "creators_api"},
 }
 MONITOR_INTERVAL_SECONDS = int(os.getenv("MONITOR_INTERVAL_SECONDS", "120"))
@@ -103,11 +104,26 @@ MONITOR_RUNNING_STALE_MINUTES = int(os.getenv("MONITOR_RUNNING_STALE_MINUTES", "
 MONITOR_FAILURE_ALERT_COOLDOWN_MINUTES = int(os.getenv("MONITOR_FAILURE_ALERT_COOLDOWN_MINUTES", "60"))
 MONITOR_INFRASTRUCTURE_FAILURE_RESTART_THRESHOLD = int(os.getenv("MONITOR_INFRASTRUCTURE_FAILURE_RESTART_THRESHOLD", "3"))
 MONITOR_AUTO_RESTART_WORKER_ON_INFRA_FAILURE = os.getenv("MONITOR_AUTO_RESTART_WORKER_ON_INFRA_FAILURE", "true").lower() == "true"
+if MONITOR_RUNNING_STALE_MINUTES * 60 <= MONITOR_TASK_TIME_LIMIT_SECONDS:
+    raise ImproperlyConfigured(
+        "MONITOR_RUNNING_STALE_MINUTES debe superar MONITOR_TASK_TIME_LIMIT_SECONDS."
+    )
 CELERY_BEAT_SCHEDULE = {
-    "monitor-saved-items": {
+    "monitor-saved-items-amazon-a": {
         "task": "monitor.tasks.monitor_saved_items",
         "schedule": MONITOR_INTERVAL_SECONDS,
-        "options": {"queue": "scraper", "expires": MONITOR_TASK_EXPIRES_SECONDS},
+        "args": ("amazon_a",),
+        "options": {"queue": "scraper_amazon_a", "expires": MONITOR_TASK_EXPIRES_SECONDS},
+    },
+    "monitor-saved-items-amazon-b": {
+        "task": "monitor.tasks.monitor_saved_items",
+        "schedule": MONITOR_INTERVAL_SECONDS,
+        "args": ("amazon_b",),
+        "options": {
+            "queue": "scraper_amazon_b",
+            "countdown": max(MONITOR_INTERVAL_SECONDS // 2, 1),
+            "expires": MONITOR_TASK_EXPIRES_SECONDS + max(MONITOR_INTERVAL_SECONDS // 2, 1),
+        },
     },
     "monitor-creators-api": {
         "task": "monitor.tasks.monitor_creators_api",
@@ -142,6 +158,11 @@ AMAZON_CREATORS_API_RETRY_DELAY_SECONDS = float(os.getenv("AMAZON_CREATORS_API_R
 AMAZON_CREATORS_API_TASK_TIME_LIMIT_SECONDS = int(os.getenv("AMAZON_CREATORS_API_TASK_TIME_LIMIT_SECONDS", "120"))
 ALERT_RESERVATION_SECONDS = int(os.getenv("ALERT_RESERVATION_SECONDS", "90"))
 AMAZON_PROFILE_DIR = os.getenv("AMAZON_PROFILE_DIR", str(BASE_DIR / ".amazon-profile"))
+AMAZON_PROFILE_DIRS = {
+    "amazon_a": os.getenv("AMAZON_PROFILE_DIR_AMAZON_A", AMAZON_PROFILE_DIR),
+    "amazon_b": os.getenv("AMAZON_PROFILE_DIR_AMAZON_B", str(BASE_DIR / ".amazon-profile-amazon-b")),
+}
+AMAZON_SCRAPER_ACCOUNT = os.getenv("AMAZON_SCRAPER_ACCOUNT", "")
 AMAZON_HEADLESS = os.getenv("AMAZON_HEADLESS", "true").lower() == "true"
 AMAZON_TIMEOUT_MS = int(os.getenv("AMAZON_TIMEOUT_MS", "45000"))
 AMAZON_BROWSER_LAUNCH_TIMEOUT_MS = int(os.getenv("AMAZON_BROWSER_LAUNCH_TIMEOUT_MS", "60000"))

@@ -7,12 +7,13 @@ class ProductForm(forms.ModelForm):
     class Meta:
         model = Product
         fields = (
-            "asin", "name", "affiliate_url", "max_price", "priority", "is_active",
+            "asin", "name", "scraper_account", "affiliate_url", "max_price", "priority", "is_active",
             "cooldown_minutes", "max_alerts_per_day", "significant_price_drop_percent",
         )
         labels = {
             "asin": "ASIN",
             "name": "Nombre",
+            "scraper_account": "Cuenta de Amazon",
             "affiliate_url": "URL de afiliado",
             "max_price": "Precio máximo",
             "priority": "Prioridad",

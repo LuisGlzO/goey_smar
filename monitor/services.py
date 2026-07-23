@@ -14,7 +14,7 @@ from django.utils import timezone
 from .email import send_monitor_failure_email
 from .amazon_creators import creators_api_is_configured, get_products_content
 from .errors import is_infrastructure_error
-from .models import Alert, MonitorRun, MonitorSettings, ObservationSource, Product, ProductCheck
+from .models import Alert, MonitorRun, MonitorSettings, ObservationSource, Product, ProductCheck, ScraperAccount
 from .performance import MonitorPerformance
 from .telegram import send_monitor_failure_alert, send_product_alert
 
@@ -58,7 +58,7 @@ def recover_stale_monitor_runs(now=None, worker_key=None):
 
 
 @transaction.atomic
-def start_monitor_run(source=ObservationSource.SCRAPER, worker_key="scraper:default"):
+def start_monitor_run(source, worker_key):
     monitor_settings, _ = MonitorSettings.objects.select_for_update().get_or_create(pk=1)
     now = timezone.now()
     recover_stale_monitor_runs(now=now, worker_key=worker_key)
@@ -82,7 +82,11 @@ def start_monitor_run(source=ObservationSource.SCRAPER, worker_key="scraper:defa
 def send_monitor_failure_notifications(run, exc):
     cooldown_cutoff = timezone.now() - timedelta(minutes=django_settings.MONITOR_FAILURE_ALERT_COOLDOWN_MINUTES)
     recent_failure = (
-        MonitorRun.objects.filter(status=MonitorRun.Status.FAILED, started_at__gte=cooldown_cutoff)
+        MonitorRun.objects.filter(
+            status=MonitorRun.Status.FAILED,
+            started_at__gte=cooldown_cutoff,
+            worker_key=run.worker_key,
+        )
         .exclude(pk=run.pk)
         .exists()
     )
@@ -112,7 +116,7 @@ def running_inside_celery_worker():
     return "celery" in args and "worker" in args
 
 
-def consecutive_infrastructure_failures(limit, worker_key="scraper:default"):
+def consecutive_infrastructure_failures(limit, worker_key):
     count = 0
     runs = (
         MonitorRun.objects.filter(worker_key=worker_key)
@@ -126,11 +130,11 @@ def consecutive_infrastructure_failures(limit, worker_key="scraper:default"):
     return count
 
 
-def request_worker_restart_after_infrastructure_failures():
+def request_worker_restart_after_infrastructure_failures(worker_key):
     threshold = django_settings.MONITOR_INFRASTRUCTURE_FAILURE_RESTART_THRESHOLD
     if not django_settings.MONITOR_AUTO_RESTART_WORKER_ON_INFRA_FAILURE or threshold <= 0:
         return
-    failures = consecutive_infrastructure_failures(threshold)
+    failures = consecutive_infrastructure_failures(threshold, worker_key)
     if failures < threshold:
         return
 
@@ -327,9 +331,25 @@ class _nullcontext:
         return False
 
 
-def run_monitor():
+def scraper_profile_dir(account_key):
+    if not ScraperAccount.objects.filter(pk=account_key).exists():
+        raise ValueError(f"Cuenta scraper desconocida: {account_key}")
+    configured_worker = django_settings.AMAZON_SCRAPER_ACCOUNT
+    if configured_worker and configured_worker != account_key:
+        raise RuntimeError(
+            f"El worker de {configured_worker} rechazo una tarea destinada a {account_key}."
+        )
+    try:
+        return django_settings.AMAZON_PROFILE_DIRS[account_key]
+    except KeyError as exc:
+        raise ValueError(f"No hay un perfil configurado para {account_key}.") from exc
+
+
+def run_monitor(account_key):
+    profile_dir = scraper_profile_dir(account_key)
     timing = MonitorPerformance()
-    run, settings = start_monitor_run(ObservationSource.SCRAPER, "scraper:default")
+    worker_key = f"scraper:{account_key}"
+    run, settings = start_monitor_run(ObservationSource.SCRAPER, worker_key)
     if run.status == MonitorRun.Status.SKIPPED and run.error == "previous_run_still_running":
         run.performance = timing.finish()
         run.save(update_fields=("performance",))
@@ -343,9 +363,16 @@ def run_monitor():
             return run
 
         with timing.stage("scrape_saved_items"):
-            items = scrape_saved_items(timing=timing)
+            items = scrape_saved_items(
+                account_key=account_key,
+                profile_dir=profile_dir,
+                timing=timing,
+            )
         with timing.stage("load_active_products"):
-            products = {product.asin: product for product in Product.objects.filter(is_active=True)}
+            products = {
+                product.asin: product
+                for product in Product.objects.filter(is_active=True, scraper_account_id=account_key)
+            }
         with timing.stage("process_visible_items", item_count=len(items)):
             for item in items:
                 product = products.pop(item.asin, None)
@@ -364,7 +391,7 @@ def run_monitor():
         run.save(update_fields=("items_seen", "status", "error", "finished_at", "performance"))
         send_monitor_failure_notifications(run, exc)
         if is_infrastructure_error(exc):
-            request_worker_restart_after_infrastructure_failures()
+            request_worker_restart_after_infrastructure_failures(worker_key)
         raise
     finally:
         if run.finished_at is None:

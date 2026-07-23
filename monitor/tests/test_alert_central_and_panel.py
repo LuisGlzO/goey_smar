@@ -76,6 +76,15 @@ class CentralAlertServiceTests(TestCase):
         self.assertEqual(api.status, MonitorRun.Status.RUNNING)
         self.assertEqual(duplicate.status, MonitorRun.Status.SKIPPED)
 
+    def test_two_scraper_accounts_can_run_together_but_each_blocks_itself(self):
+        account_a, _ = start_monitor_run(ObservationSource.SCRAPER, "scraper:amazon_a")
+        account_b, _ = start_monitor_run(ObservationSource.SCRAPER, "scraper:amazon_b")
+        duplicate_a, _ = start_monitor_run(ObservationSource.SCRAPER, "scraper:amazon_a")
+
+        self.assertEqual(account_a.status, MonitorRun.Status.RUNNING)
+        self.assertEqual(account_b.status, MonitorRun.Status.RUNNING)
+        self.assertEqual(duplicate_a.status, MonitorRun.Status.SKIPPED)
+
 
 class CreatorsMonitorTests(TestCase):
     @override_settings(AMAZON_CREATORS_API_BATCH_SIZE=10, AMAZON_CREATORS_API_BATCH_DELAY_SECONDS=0)

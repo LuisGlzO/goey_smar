@@ -118,6 +118,7 @@ def send_monitor_failure_alert(run, exc: Exception) -> str:
 
     text = (
         "<b>Scraper fallido</b>\n"
+        f"Worker: <code>{html.escape(run.worker_key)}</code>\n"
         f"Run ID: <code>{run.pk}</code>\n"
         f"Estado: <code>{html.escape(run.status)}</code>\n"
         f"Inicio: <code>{html.escape(started_at)}</code>\n"

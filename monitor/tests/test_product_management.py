@@ -6,7 +6,9 @@ from django.test import TestCase
 from django.urls import reverse
 
 from monitor.amazon_creators import CreatorProductContent
-from monitor.models import Product
+from django.db.models import ProtectedError
+
+from monitor.models import Product, ScraperAccount
 
 
 class ProductManagementTests(TestCase):
@@ -23,6 +25,7 @@ class ProductManagementTests(TestCase):
     def payload(self, **overrides):
         values = {
             "asin": "B0NEW12345", "name": "Producto nuevo", "affiliate_url": "",
+            "scraper_account": "amazon_a",
             "max_price": "900.00", "priority": "20", "is_active": "on",
             "cooldown_minutes": "60", "max_alerts_per_day": "3",
             "significant_price_drop_percent": "5.00",
@@ -64,6 +67,29 @@ class ProductManagementTests(TestCase):
         self.assertEqual(product.name, "Producto nuevo")
         self.assertEqual(product.image_url, "https://m.media-amazon.com/photo.jpg")
         self.assertIsNotNone(product.image_refreshed_at)
+
+    def test_create_requires_scraper_account(self):
+        self.grant("view_product", "add_product")
+        payload = self.payload()
+        payload.pop("scraper_account")
+        response = self.client.post(reverse("product_create"), payload)
+        self.assertEqual(response.status_code, 200)
+        self.assertFormError(response.context["form"], "scraper_account", "Este campo es obligatorio.")
+
+    @patch("monitor.views.safe_get_product_content", return_value=None)
+    def test_edit_can_reassign_account_without_replacing_history(self, get_content):
+        self.grant("view_product", "change_product")
+        response = self.client.post(
+            reverse("product_edit", args=[self.product.pk]),
+            self.payload(asin=self.product.asin, name=self.product.name, scraper_account="amazon_b"),
+        )
+        self.assertRedirects(response, reverse("products"))
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.scraper_account_id, "amazon_b")
+
+    def test_account_with_products_is_protected_from_deletion(self):
+        with self.assertRaises(ProtectedError):
+            ScraperAccount.objects.get(pk="amazon_a").delete()
 
     @patch("monitor.views.safe_get_product_content", return_value=None)
     def test_api_failure_does_not_cancel_creation(self, get_content):

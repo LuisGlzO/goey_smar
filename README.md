@@ -47,8 +47,8 @@ Si el entorno no está activado, use el lanzador incluido:
 
 ```powershell
 .\scripts\manage.ps1 collectstatic --noinput
-.\scripts\manage.ps1 init_amazon_session
-.\scripts\manage.ps1 monitor_saved_items
+.\scripts\manage.ps1 init_amazon_session --account amazon_a
+.\scripts\manage.ps1 monitor_saved_items --account amazon_a
 ```
 
 El lanzador ejecuta `collectstatic` automáticamente al usar `runserver` si faltan

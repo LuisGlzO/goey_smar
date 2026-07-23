@@ -2,6 +2,7 @@
 .venv/
 goey_smar_env/
 .amazon-profile/
+.amazon-profile-amazon-b/
 amazon-profile/
 .docker-config/
 db.sqlite3

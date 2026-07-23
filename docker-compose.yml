@@ -39,7 +39,7 @@ services:
       redis:
         condition: service_started
 
-  worker_scraper:
+  worker_scraper_amazon_a:
     build: .
     env_file: .env
     environment:
@@ -48,9 +48,32 @@ services:
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/0
       AMAZON_PROFILE_DIR: /app/amazon-profile
-    command: celery -A config worker -l INFO --concurrency=1 --prefetch-multiplier=1 -Q scraper -n scraper@%h
+      AMAZON_PROFILE_DIR_AMAZON_A: /app/amazon-profile
+      AMAZON_SCRAPER_ACCOUNT: amazon_a
+      GOEY_CELERY_WORKER_PROCESS: "1"
+    command: celery -A config worker -l INFO --concurrency=1 --prefetch-multiplier=1 -Q scraper_amazon_a -n scraper_amazon_a@%h
     volumes:
       - amazon_profile:/app/amazon-profile
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  worker_scraper_amazon_b:
+    build: .
+    env_file: .env
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      AMAZON_PROFILE_DIR_AMAZON_B: /app/amazon-profile
+      AMAZON_SCRAPER_ACCOUNT: amazon_b
+      GOEY_CELERY_WORKER_PROCESS: "1"
+    command: celery -A config worker -l INFO --concurrency=1 --prefetch-multiplier=1 -Q scraper_amazon_b -n scraper_amazon_b@%h
+    volumes:
+      - amazon_profile_b:/app/amazon-profile
     depends_on:
       db:
         condition: service_healthy
@@ -91,3 +114,4 @@ volumes:
   postgres_data:
   redis_data:
   amazon_profile:
+  amazon_profile_b:

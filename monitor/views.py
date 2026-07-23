@@ -11,7 +11,7 @@ from django.utils import timezone
 
 from .amazon_creators import safe_get_product_content
 from .forms import ProductBulkUpdateForm, ProductForm
-from .models import Alert, MonitorSettings, ObservationSource, Product, ProductCheck
+from .models import Alert, MonitorSettings, ObservationSource, Product, ProductCheck, ScraperAccount
 from .services import request_product_alert
 
 
@@ -45,7 +45,8 @@ def _refresh_product_image(product):
 def products(request):
     query = request.GET.get("q", "").strip()
     status = request.GET.get("status", "all")
-    queryset = Product.objects.all()
+    account = request.GET.get("account", "all")
+    queryset = Product.objects.select_related("scraper_account")
     if query:
         queryset = queryset.filter(Q(asin__icontains=query) | Q(name__icontains=query))
     if status == "active":
@@ -54,8 +55,15 @@ def products(request):
         queryset = queryset.filter(is_active=False)
     else:
         status = "all"
+    if account != "all" and ScraperAccount.objects.filter(pk=account).exists():
+        queryset = queryset.filter(scraper_account_id=account)
+    else:
+        account = "all"
     page = Paginator(queryset, 25).get_page(request.GET.get("page"))
-    return render(request, "monitor/products.html", {"page": page, "query": query, "status": status})
+    return render(request, "monitor/products.html", {
+        "page": page, "query": query, "status": status, "account": account,
+        "scraper_accounts": ScraperAccount.objects.all(),
+    })
 
 
 @login_required

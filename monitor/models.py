@@ -7,6 +7,32 @@ class ObservationSource(models.TextChoices):
     MANUAL = "manual", "Manual"
 
 
+class ScraperAccount(models.Model):
+    key = models.SlugField(max_length=50, primary_key=True)
+    name = models.CharField(max_length=100)
+
+    class Meta:
+        ordering = ("key",)
+        verbose_name = "Cuenta scraper de Amazon"
+        verbose_name_plural = "Cuentas scraper de Amazon"
+
+    def __str__(self):
+        return self.name
+
+    @classmethod
+    def from_db(cls, db, field_names, values):
+        instance = super().from_db(db, field_names, values)
+        instance._original_key = instance.key
+        return instance
+
+    def save(self, *args, **kwargs):
+        original_key = getattr(self, "_original_key", self.key)
+        if not self._state.adding and self.key != original_key:
+            raise ValueError("La clave de una cuenta scraper es inmutable.")
+        super().save(*args, **kwargs)
+        self._original_key = self.key
+
+
 class Product(models.Model):
     class Priority(models.IntegerChoices):
         LOW = 10, "Baja"
@@ -14,6 +40,9 @@ class Product(models.Model):
         HIGH = 30, "Alta"
 
     asin = models.CharField(max_length=10, unique=True)
+    scraper_account = models.ForeignKey(
+        ScraperAccount, on_delete=models.PROTECT, related_name="products", default="amazon_a"
+    )
     name = models.CharField(max_length=250)
     affiliate_url = models.URLField(
         max_length=1000,

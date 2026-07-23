@@ -30,7 +30,9 @@ class MonitorSavedItemsCommandTests(SimpleTestCase):
         )()
         stdout = StringIO()
 
-        call_command("monitor_saved_items", stdout=stdout)
+        call_command("monitor_saved_items", account="amazon_a", stdout=stdout)
+
+        run_monitor.assert_called_once_with("amazon_a")
 
         output = stdout.getvalue()
         self.assertIn("Ejecucion 199: 64 elementos visibles", output)

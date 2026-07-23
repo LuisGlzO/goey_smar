@@ -12,10 +12,11 @@ def send_monitor_failure_email(run, exc: Exception) -> int:
 
     started_at = timezone.localtime(run.started_at).strftime("%Y-%m-%d %H:%M:%S %Z")
     finished_at = timezone.localtime(run.finished_at or timezone.now()).strftime("%Y-%m-%d %H:%M:%S %Z")
-    subject = f"{settings.MONITOR_FAILURE_EMAIL_SUBJECT_PREFIX} Scraper fallido"
+    subject = f"{settings.MONITOR_FAILURE_EMAIL_SUBJECT_PREFIX} Scraper fallido: {run.worker_key}"
     body = (
         "La ejecucion del scraper fallo y requiere revision.\n\n"
         f"Run ID: {run.pk}\n"
+        f"Worker: {run.worker_key}\n"
         f"Estado: {run.status}\n"
         f"Inicio: {started_at}\n"
         f"Fin: {finished_at}\n"

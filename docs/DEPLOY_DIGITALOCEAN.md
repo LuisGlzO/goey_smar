@@ -17,15 +17,15 @@ Prepare:
 - una contrasena fuerte para PostgreSQL;
 - una `DJANGO_SECRET_KEY` nueva y larga.
 
-Para el MVP use un Droplet Ubuntu con al menos 2 GB de RAM. Playwright/Chromium
-consume memoria y 1 GB puede quedar justo.
+Para dos scrapers use un Droplet AMD Premium con al menos 2 GB de RAM y 2 vCPU.
+Vigile `docker stats`, swap y número de procesos durante ejecuciones solapadas.
 
 ## 2. Crear el Droplet
 
 Recomendado:
 
 - Ubuntu LTS.
-- Plan Basic de 2 GB RAM.
+- Plan AMD Premium de 2 GB RAM y 2 vCPU como punto de partida.
 - Autenticacion por SSH key.
 - Region cercana al cliente.
 
@@ -114,9 +114,10 @@ Levante los servicios:
 docker compose -f docker-compose.prod.yml up -d --build
 ```
 
-Este único comando levanta Beat y los workers dedicados `worker_scraper` y
-`worker_creators`. Cada uno consume exclusivamente su cola y ambos pueden correr
-en paralelo.
+Este único comando levanta Beat, `worker_scraper_amazon_a`,
+`worker_scraper_amazon_b` y `worker_creators`. Cada uno consume exclusivamente su
+cola. Los scrapers usan el mismo intervalo y `amazon_b` inicia medio intervalo
+después de `amazon_a`.
 
 Al actualizar una instalación que todavía tenga el antiguo servicio único
 `worker`, use una sola vez `--remove-orphans` para retirar ese contenedor:
@@ -200,7 +201,8 @@ debe ser la entrada publica.
 docker compose -f docker-compose.prod.yml ps
 docker compose -f docker-compose.prod.yml logs -f proxy
 docker compose -f docker-compose.prod.yml logs -f web
-docker compose -f docker-compose.prod.yml logs -f worker_scraper
+docker compose -f docker-compose.prod.yml logs -f worker_scraper_amazon_a
+docker compose -f docker-compose.prod.yml logs -f worker_scraper_amazon_b
 docker compose -f docker-compose.prod.yml logs -f worker_creators
 docker compose -f docker-compose.prod.yml logs -f beat
 ```
@@ -218,8 +220,9 @@ Fuera del horario permitido, la tarea queda como `Omitido` y no abre Amazon.
 
 ## 8. Sesion de Amazon
 
-El servicio `worker_scraper` usa el volumen Docker `amazon_profile` montado en
-`/app/amazon-profile`. La sesion debe crearse en un ambiente compatible con el
+`worker_scraper_amazon_a` usa `amazon_profile` y `worker_scraper_amazon_b` usa
+`amazon_profile_b`; ambos los montan como `/app/amazon-profile` dentro de su propio
+contenedor. La sesión debe crearse en un ambiente compatible con el
 Chromium Linux que usa el contenedor.
 
 Para el MVP hay dos opciones:
@@ -233,7 +236,13 @@ renovar la sesion.
 
 ### Iniciar o renovar sesion con noVNC temporal
 
-Use este flujo cuando `worker_scraper` muestre errores como:
+Los comandos siguientes muestran `amazon_a`. Para renovar la segunda cuenta,
+sustituya siempre y en conjunto `worker_scraper_amazon_a` por
+`worker_scraper_amazon_b` y `--account amazon_a` por `--account amazon_b`. Detenga
+sólo el worker seleccionado; no es necesario detener Beat, el otro scraper ni
+Creators API. La tarea de la cuenta detenida expirará en Redis si llega a vencer.
+
+Use este flujo cuando uno de los workers scraper muestre errores como:
 
 ```text
 La sesion de Amazon no es valida; ejecute init_amazon_session.
@@ -252,7 +261,7 @@ ssh -L 6080:127.0.0.1:6080 root@SERVER_PUBLIC_IP
 
 ```bash
 cd ~/goey_smar
-docker compose -f docker-compose.prod.yml stop beat worker_scraper
+docker compose -f docker-compose.prod.yml stop worker_scraper_amazon_a
 ```
 
 Al detener Beat no se publican nuevas rondas de ninguno de los motores. El worker
@@ -262,7 +271,7 @@ la renovación; cualquier tarea ya encolada conserva su expiración configurada.
 3. Limpie locks anteriores del perfil de Chromium:
 
 ```bash
-docker compose -f docker-compose.prod.yml run --rm worker_scraper sh -lc '
+docker compose -f docker-compose.prod.yml run --rm worker_scraper_amazon_a sh -lc '
 rm -f /app/amazon-profile/SingletonLock \
       /app/amazon-profile/SingletonSocket \
       /app/amazon-profile/SingletonCookie \
@@ -273,7 +282,7 @@ rm -f /app/amazon-profile/SingletonLock \
 4. Levante el navegador temporal con noVNC:
 
 ```bash
-docker compose -f docker-compose.prod.yml run --rm --publish 127.0.0.1:6080:6080 worker_scraper sh -lc '
+docker compose -f docker-compose.prod.yml run --rm --publish 127.0.0.1:6080:6080 worker_scraper_amazon_a sh -lc '
 set -e
 apt-get update
 apt-get install -y --no-install-recommends xvfb fluxbox x11vnc novnc websockify x11-utils
@@ -295,7 +304,7 @@ fluxbox >/tmp/fluxbox.log 2>&1 &
 x11vnc -display :99 -forever -shared -nopw -listen 127.0.0.1 -xkb >/tmp/x11vnc.log 2>&1 &
 websockify --web=/usr/share/novnc/ 0.0.0.0:6080 127.0.0.1:5900 >/tmp/novnc.log 2>&1 &
 
-python manage.py init_amazon_session
+python manage.py init_amazon_session --account amazon_a
 '
 ```
 
@@ -315,8 +324,8 @@ http://127.0.0.1:6080/vnc.html?autoconnect=true&resize=scale
 7. Pruebe una ejecucion manual:
 
 ```bash
-docker compose -f docker-compose.prod.yml start worker_scraper
-docker compose -f docker-compose.prod.yml exec worker_scraper python manage.py monitor_saved_items
+docker compose -f docker-compose.prod.yml start worker_scraper_amazon_a
+docker compose -f docker-compose.prod.yml exec worker_scraper_amazon_a python manage.py monitor_saved_items --account amazon_a
 ```
 
 Si responde con `Ejecucion X: N elementos visibles`, reactive la agenda:
@@ -328,7 +337,7 @@ docker compose -f docker-compose.prod.yml start beat
 8. Revise logs y admin:
 
 ```bash
-docker compose -f docker-compose.prod.yml logs --tail=80 worker_scraper
+docker compose -f docker-compose.prod.yml logs --tail=80 worker_scraper_amazon_a
 docker compose -f docker-compose.prod.yml logs --tail=80 worker_creators
 docker compose -f docker-compose.prod.yml logs --tail=80 beat
 ```
@@ -337,8 +346,8 @@ En Django Admin revise `Monitor runs`, `Product checks` y `Alerts`.
 Si quedo una ejecucion antigua en `En ejecucion`, puede cerrarla con:
 
 ```bash
-docker compose -f docker-compose.prod.yml exec web python manage.py recover_stale_monitor_runs
-docker compose -f docker-compose.prod.yml restart worker_scraper
+docker compose -f docker-compose.prod.yml exec web python manage.py recover_stale_monitor_runs --account amazon_a
+docker compose -f docker-compose.prod.yml restart worker_scraper_amazon_a
 ```
 
 Si el navegador falla indicando que el perfil esta en uso, repita los pasos 2 y

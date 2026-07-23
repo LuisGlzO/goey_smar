@@ -79,7 +79,7 @@ arrancar `runserver` cuando detecta que faltan.
 En una instalación local con interfaz gráfica:
 
 ```powershell
-.\scripts\manage.ps1 init_amazon_session
+.\scripts\manage.ps1 init_amazon_session --account amazon_a
 ```
 
 Inicie sesión manualmente, abra el carrito con la sección Guardado para más tarde
@@ -87,7 +87,7 @@ y presione Enter en la terminal. No comparta ni agregue el perfil generado al
 repositorio.
 
 Para servidor o Docker, genere el perfil en un entorno gráfico autorizado y
-móntelo exclusivamente en `worker_scraper` como `/app/amazon-profile`. Amazon puede
+móntelo exclusivamente en el worker de su cuenta como `/app/amazon-profile`. Amazon puede
 invalidar sesiones o solicitar CAPTCHA; en ese caso hay que repetir este paso.
 
 ## 3. Productos
@@ -158,7 +158,7 @@ fallback local para no bloquear demasiado la corrida.
 Ejecute una revisión manual antes de activar la agenda:
 
 ```powershell
-.\scripts\manage.ps1 monitor_saved_items
+.\scripts\manage.ps1 monitor_saved_items --account amazon_a
 ```
 
 Revise `Monitor runs`, `Product checks` y `Alerts` en Django Admin. Los elementos
@@ -178,10 +178,16 @@ Esta modalidad reutiliza directamente la sesión creada por
 docker compose up -d db redis
 ```
 
-Después abra tres terminales. En la primera ejecute el worker del scraper:
+Después abra cuatro terminales. En las dos primeras ejecute los workers scraper:
 
 ```powershell
-.\scripts\celery.ps1 -A config worker -l INFO --pool=solo -Q scraper -n scraper@%h
+$env:AMAZON_SCRAPER_ACCOUNT="amazon_a"
+.\scripts\celery.ps1 -A config worker -l INFO --pool=solo -Q scraper_amazon_a -n scraper_amazon_a@%h
+```
+
+```powershell
+$env:AMAZON_SCRAPER_ACCOUNT="amazon_b"
+.\scripts\celery.ps1 -A config worker -l INFO --pool=solo -Q scraper_amazon_b -n scraper_amazon_b@%h
 ```
 
 En la segunda ejecute el worker de Creators API:
@@ -201,7 +207,7 @@ Ciérrelo y use los dos comandos anteriores; no debe mantenerse una cuarta
 terminal con el comando antiguo.
 
 Celery Beat agenda ambos motores según sus intervalos. Redis entrega el scraper a
-la cola `scraper` y la API a `creators_api`, por lo que los dos workers pueden
+las colas `scraper_amazon_a` y `scraper_amazon_b`, y la API a `creators_api`, por lo que los workers pueden
 ejecutarse al mismo tiempo y solicitar alertas al servicio central compartido.
 Si el scraper pierde la sesión de Amazon, Creators API puede continuar trabajando
 si su worker, Beat, Redis y PostgreSQL permanecen activos.
@@ -265,39 +271,40 @@ se marca automaticamente como `Fallido` con error `stale_run_recovered`.
 Para recuperar manualmente ejecuciones viejas que ya quedaron en `running`:
 
 ```powershell
-.\scripts\manage.ps1 recover_stale_monitor_runs
+.\scripts\manage.ps1 recover_stale_monitor_runs --account amazon_a
 ```
 
 En Docker/produccion:
 
 ```bash
-docker compose -f docker-compose.prod.yml exec web python manage.py recover_stale_monitor_runs
+docker compose -f docker-compose.prod.yml exec web python manage.py recover_stale_monitor_runs --account amazon_a
 ```
 
 Si el proceso real del worker tambien quedo colgado, reinicie el servicio:
 
 ```bash
-docker compose -f docker-compose.prod.yml restart worker_scraper
+docker compose -f docker-compose.prod.yml restart worker_scraper_amazon_a
 ```
 
 ## 7. Docker Compose
 
-`docker-compose.yml` describe seis servicios relacionados:
+`docker-compose.yml` describe los servicios relacionados:
 
 - `db`: PostgreSQL, almacena productos, verificaciones y alertas.
 - `redis`: aloja las colas `scraper` y `creators_api`.
 - `web`: Django Admin servido por Gunicorn.
 - `beat`: programa verificaciones periódicas.
-- `worker_scraper`: consume exclusivamente la cola Playwright y monta el perfil.
+- `worker_scraper_amazon_a`: consume `scraper_amazon_a` y reutiliza `amazon_profile`.
+- `worker_scraper_amazon_b`: consume `scraper_amazon_b` y monta `amazon_profile_b`.
 - `worker_creators`: consume exclusivamente la cola de Creators API.
 
 `docker compose up -d db redis` inicia únicamente base y cola. `docker compose up
---build -d` intenta iniciar los seis servicios.
+--build -d` inicia todos los servicios.
 En producción, `docker compose -f docker-compose.prod.yml up -d --build` crea o
 actualiza automáticamente ambos workers; no es necesario iniciarlos por separado.
 
 La ejecución completamente dentro de Docker requiere preparar una sesión de
-Amazon compatible dentro del volumen `amazon_profile`. Una sesión creada por el
+Amazon compatible dentro del volumen correspondiente. Una sesión creada por el
 navegador de Windows no debe asumirse compatible con Chromium Linux del
 contenedor. Para la instalación local actual use la ejecución automática local
 descrita arriba.
@@ -338,10 +345,18 @@ la siguiente ejecución exitosa del monitor API.
 
 ## 11. Incidentes
 
+Las alertas técnicas incluyen `scraper:amazon_a` o `scraper:amazon_b`. El cooldown
+de fallos se calcula por cuenta: el primer fallo se informa inmediatamente y un
+CAPTCHA persistente vuelve a notificarse después de
+`MONITOR_FAILURE_ALERT_COOLDOWN_MINUTES`. La otra cuenta continúa normalmente.
+
+Antes de reasignar un producto desde el panel, muévalo también al carrito o a
+Guardado para más tarde de la cuenta Amazon de destino.
+
 - Ejecución fallida por sesión: regenere la sesión de Amazon.
 - `pthread_create: Resource temporarily unavailable`: el contenedor o Droplet se
   quedo sin hilos/procesos o memoria mientras Chromium arrancaba. Reinicie
-  `worker_scraper`, revise `docker stats`, `free -h`, `ps -eLf | wc -l` y considere subir
+  el worker scraper afectado, revise `docker stats`, `free -h`, `ps -eLf | wc -l` y considere subir
   RAM si se repite. El worker tambien intenta auto-recuperarse si el error se
   repite varias veces consecutivas.
 - Selectores sin resultados: inspeccione cambios visuales de Amazon y ajuste

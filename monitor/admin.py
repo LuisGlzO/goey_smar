@@ -1,13 +1,32 @@
 from django.contrib import admin
 
-from .models import Alert, MonitorRun, MonitorSettings, Product, ProductCheck
+from .models import Alert, MonitorRun, MonitorSettings, Product, ProductCheck, ScraperAccount
+
+
+@admin.register(ScraperAccount)
+class ScraperAccountAdmin(admin.ModelAdmin):
+    list_display = ("key", "name", "product_count")
+    readonly_fields = ("key", "name")
+
+    @admin.display(description="Productos")
+    def product_count(self, obj):
+        return obj.products.count()
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return request.method in ("GET", "HEAD")
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(Product)
 class ProductAdmin(admin.ModelAdmin):
-    list_display = ("asin", "name", "max_price", "priority", "is_active", "cooldown_minutes", "max_alerts_per_day", "image_refreshed_at")
+    list_display = ("asin", "name", "scraper_account", "max_price", "priority", "is_active", "cooldown_minutes", "max_alerts_per_day", "image_refreshed_at")
     readonly_fields = ("image_url", "image_refreshed_at")
-    list_filter = ("is_active", "priority")
+    list_filter = ("scraper_account", "is_active", "priority")
     search_fields = ("asin", "name")
 
 

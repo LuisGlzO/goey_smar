@@ -45,6 +45,7 @@ CHROMIUM_PROFILE_LOCK_FILES = (
     "SingletonCookie",
     "DevToolsActivePort",
 )
+PROFILE_OWNER_FILE = ".goey-profile-owner"
 
 ITEM_PAYLOADS_JS = """root => {
     const candidates = new Set();
@@ -198,15 +199,33 @@ def cleanup_chromium_profile_locks(profile_dir: str) -> None:
             pass
 
 
-def scrape_saved_items_once(headless: bool, timing=None) -> list[ScrapedItem]:
+def validate_profile_owner(profile_dir: str, account_key: str) -> None:
+    profile_path = Path(profile_dir)
+    profile_path.mkdir(parents=True, exist_ok=True)
+    owner_path = profile_path / PROFILE_OWNER_FILE
+    try:
+        file_descriptor = owner_path.open("x", encoding="utf-8")
+    except FileExistsError:
+        owner = owner_path.read_text(encoding="utf-8").strip()
+        if owner != account_key:
+            raise RuntimeError(
+                f"El perfil de Amazon pertenece a {owner or 'una cuenta desconocida'}, no a {account_key}."
+            )
+    else:
+        with file_descriptor:
+            file_descriptor.write(account_key)
+
+
+def scrape_saved_items_once(headless: bool, account_key: str, profile_dir: str, timing=None) -> list[ScrapedItem]:
     from playwright.sync_api import sync_playwright
 
     with timing.stage("cleanup_chromium_locks", group="scraper") if timing else _nullcontext():
-        cleanup_chromium_profile_locks(settings.AMAZON_PROFILE_DIR)
+        validate_profile_owner(profile_dir, account_key)
+        cleanup_chromium_profile_locks(profile_dir)
     with sync_playwright() as playwright:
         with timing.stage("launch_chromium", group="scraper") if timing else _nullcontext():
             context = playwright.chromium.launch_persistent_context(
-                settings.AMAZON_PROFILE_DIR,
+                profile_dir,
                 headless=headless,
                 locale="es-MX",
                 args=[
@@ -234,7 +253,10 @@ def scrape_saved_items_once(headless: bool, timing=None) -> list[ScrapedItem]:
                 or "identifícate" in account_text
                 or "sign in" in account_text
             ):
-                raise RuntimeError("La sesion de Amazon no es valida; ejecute init_amazon_session.")
+                raise RuntimeError(
+                    f"La sesion de Amazon para {account_key} no es valida; "
+                    f"ejecute init_amazon_session --account {account_key}."
+                )
             payloads = collect_cart_item_payloads(page, timing=timing) + collect_saved_item_payloads(page, timing=timing)
             with timing.stage("parse_payloads", group="scraper", payload_count=len(payloads)) if timing else _nullcontext():
                 by_asin = {}
@@ -250,14 +272,14 @@ def scrape_saved_items_once(headless: bool, timing=None) -> list[ScrapedItem]:
                 context.close()
 
 
-def scrape_saved_items(headless: bool | None = None, timing=None) -> list[ScrapedItem]:
+def scrape_saved_items(account_key: str, profile_dir: str, headless: bool | None = None, timing=None) -> list[ScrapedItem]:
     headless = settings.AMAZON_HEADLESS if headless is None else headless
     attempts = max(settings.AMAZON_SCRAPER_MAX_ATTEMPTS, 1)
     last_exc = None
     for attempt in range(1, attempts + 1):
         started = perf_counter()
         try:
-            items = scrape_saved_items_once(headless, timing=timing)
+            items = scrape_saved_items_once(headless, account_key, profile_dir, timing=timing)
             _record_timing(timing, "scrape_attempt", perf_counter() - started, attempt=attempt, status="success")
             return items
         except Exception as exc:

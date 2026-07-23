@@ -14,6 +14,7 @@ from monitor.scraper import (
     item_score,
     parse_price,
     scrape_saved_items,
+    validate_profile_owner,
 )
 
 
@@ -83,12 +84,19 @@ class ScraperParsingTests(SimpleTestCase):
             for filename in CHROMIUM_PROFILE_LOCK_FILES:
                 self.assertFalse((Path(profile_dir) / filename).exists())
 
+    def test_profile_owner_rejects_a_different_account(self):
+        with TemporaryDirectory() as profile_dir:
+            validate_profile_owner(profile_dir, "amazon_a")
+            validate_profile_owner(profile_dir, "amazon_a")
+            with self.assertRaisesMessage(RuntimeError, "amazon_a"):
+                validate_profile_owner(profile_dir, "amazon_b")
+
     @override_settings(AMAZON_SCRAPER_MAX_ATTEMPTS=2, AMAZON_SCRAPER_RETRY_DELAY_SECONDS=0)
     @patch("monitor.scraper.scrape_saved_items_once")
     def test_scrape_saved_items_retries_infrastructure_error(self, scrape_saved_items_once):
         scrape_saved_items_once.side_effect = [RuntimeError("Page.goto: Timeout 45000ms exceeded"), []]
 
-        self.assertEqual(scrape_saved_items(), [])
+        self.assertEqual(scrape_saved_items("amazon_a", "/tmp/profile"), [])
 
         self.assertEqual(scrape_saved_items_once.call_count, 2)
 
@@ -98,6 +106,6 @@ class ScraperParsingTests(SimpleTestCase):
         scrape_saved_items_once.side_effect = RuntimeError("La sesion de Amazon no es valida")
 
         with self.assertRaisesMessage(RuntimeError, "sesion de Amazon"):
-            scrape_saved_items()
+            scrape_saved_items("amazon_a", "/tmp/profile")
 
         scrape_saved_items_once.assert_called_once()

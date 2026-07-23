@@ -168,16 +168,16 @@ class MonitorSettingsTests(TestCase):
     @patch("monitor.services.scrape_saved_items")
     def test_disabled_monitor_skips_without_opening_amazon(self, scrape_saved_items):
         MonitorSettings.objects.create(enabled=False)
-        run = run_monitor()
+        run = run_monitor("amazon_a")
         self.assertEqual(run.status, MonitorRun.Status.SKIPPED)
         self.assertEqual(run.error, "monitor_disabled")
         scrape_saved_items.assert_not_called()
 
     @patch("monitor.services.scrape_saved_items")
     def test_running_monitor_skips_overlapping_execution(self, scrape_saved_items):
-        MonitorRun.objects.create(status=MonitorRun.Status.RUNNING)
+        MonitorRun.objects.create(status=MonitorRun.Status.RUNNING, worker_key="scraper:amazon_a")
 
-        run = run_monitor()
+        run = run_monitor("amazon_a")
 
         self.assertEqual(run.status, MonitorRun.Status.SKIPPED)
         self.assertEqual(run.error, "previous_run_still_running")
@@ -186,10 +186,10 @@ class MonitorSettingsTests(TestCase):
     @override_settings(MONITOR_RUNNING_STALE_MINUTES=10)
     @patch("monitor.services.scrape_saved_items", return_value=[])
     def test_stale_running_monitor_is_recovered_before_new_execution(self, scrape_saved_items):
-        stale = MonitorRun.objects.create(status=MonitorRun.Status.RUNNING)
+        stale = MonitorRun.objects.create(status=MonitorRun.Status.RUNNING, worker_key="scraper:amazon_a")
         MonitorRun.objects.filter(pk=stale.pk).update(started_at=timezone.now() - timedelta(minutes=30))
 
-        run = run_monitor()
+        run = run_monitor("amazon_a")
 
         stale.refresh_from_db()
         self.assertEqual(stale.status, MonitorRun.Status.FAILED)
@@ -217,7 +217,7 @@ class MonitorSettingsTests(TestCase):
     @patch("monitor.services.scrape_saved_items", side_effect=RuntimeError("captcha requerido"))
     def test_failed_monitor_sends_failure_notification(self, scrape_saved_items, send_failure_notifications):
         with self.assertRaisesMessage(RuntimeError, "captcha requerido"):
-            run_monitor()
+            run_monitor("amazon_a")
 
         run = MonitorRun.objects.get()
         self.assertEqual(run.status, MonitorRun.Status.FAILED)
@@ -227,12 +227,28 @@ class MonitorSettingsTests(TestCase):
 
     @patch("monitor.services.scrape_saved_items", return_value=[])
     def test_successful_monitor_stores_performance_breakdown(self, scrape_saved_items):
-        run = run_monitor()
+        run = run_monitor("amazon_a")
 
         self.assertEqual(run.status, MonitorRun.Status.SUCCESS)
         self.assertIn("total_seconds", run.performance)
         self.assertIn("stages", run.performance)
         self.assertTrue(any(stage["name"] == "scrape_saved_items" for stage in run.performance["stages"]))
+
+    @patch("monitor.services.scraper_profile_dir", return_value="/profiles/amazon_a")
+    @patch("monitor.services.scrape_saved_items", return_value=[])
+    def test_monitor_only_marks_its_assigned_partition_as_missing(self, scrape_saved_items, profile_dir):
+        assigned = Product.objects.create(asin="B0PARTA001", name="Cuenta A", max_price=100)
+        other = Product.objects.create(
+            asin="B0PARTB001", name="Cuenta B", max_price=100, scraper_account_id="amazon_b"
+        )
+
+        run = run_monitor("amazon_a")
+
+        self.assertTrue(ProductCheck.objects.filter(run=run, product=assigned).exists())
+        self.assertFalse(ProductCheck.objects.filter(run=run, product=other).exists())
+        scrape_saved_items.assert_called_once_with(
+            account_key="amazon_a", profile_dir="/profiles/amazon_a", timing=ANY
+        )
 
     @patch("monitor.services.send_monitor_failure_email", side_effect=RuntimeError("smtp caido"))
     @patch("monitor.services.send_monitor_failure_alert", side_effect=RuntimeError("telegram caido"))
@@ -279,19 +295,34 @@ class MonitorSettingsTests(TestCase):
         send_failure_alert.assert_not_called()
         send_failure_email.assert_not_called()
 
+    @patch("monitor.services.send_monitor_failure_email", return_value=1)
+    @patch("monitor.services.send_monitor_failure_alert", side_effect=RuntimeError("telegram caido"))
+    def test_failure_notifier_cooldown_is_independent_per_worker(self, send_failure_alert, send_failure_email):
+        MonitorRun.objects.create(
+            worker_key="scraper:amazon_a", status=MonitorRun.Status.FAILED, error="captcha"
+        )
+        run = MonitorRun.objects.create(
+            worker_key="scraper:amazon_b", status=MonitorRun.Status.FAILED, error="captcha"
+        )
+
+        send_monitor_failure_notifications(run, RuntimeError("captcha"))
+
+        send_failure_alert.assert_called_once()
+        send_failure_email.assert_called_once()
+
     def test_consecutive_infrastructure_failures_counts_only_latest_infra_errors(self):
         MonitorRun.objects.create(status=MonitorRun.Status.FAILED, error="Page.goto: Timeout 45000ms exceeded")
         MonitorRun.objects.create(status=MonitorRun.Status.FAILED, error="pthread_create: Resource temporarily unavailable")
         MonitorRun.objects.create(status=MonitorRun.Status.SUCCESS)
 
-        self.assertEqual(consecutive_infrastructure_failures(3), 0)
+        self.assertEqual(consecutive_infrastructure_failures(3, "scraper:default"), 0)
 
         MonitorRun.objects.all().delete()
         MonitorRun.objects.create(status=MonitorRun.Status.SUCCESS)
         MonitorRun.objects.create(status=MonitorRun.Status.FAILED, error="stale_run_recovered: exceeded 10 minutes")
         MonitorRun.objects.create(status=MonitorRun.Status.FAILED, error="pthread_create: Resource temporarily unavailable")
 
-        self.assertEqual(consecutive_infrastructure_failures(3), 2)
+        self.assertEqual(consecutive_infrastructure_failures(3, "scraper:default"), 2)
 
     def test_creators_runs_do_not_interrupt_scraper_failure_streak(self):
         MonitorRun.objects.create(
@@ -312,7 +343,7 @@ class MonitorSettingsTests(TestCase):
             error="pthread_create: Resource temporarily unavailable",
         )
 
-        self.assertEqual(consecutive_infrastructure_failures(2), 2)
+        self.assertEqual(consecutive_infrastructure_failures(2, "scraper:default"), 2)
 
     @override_settings(
         MONITOR_INFRASTRUCTURE_FAILURE_RESTART_THRESHOLD=2,
@@ -327,7 +358,7 @@ class MonitorSettingsTests(TestCase):
         MonitorRun.objects.create(status=MonitorRun.Status.FAILED, error="stale_run_recovered: exceeded 10 minutes")
 
         with self.assertLogs("monitor.services", level="ERROR"):
-            request_worker_restart_after_infrastructure_failures()
+            request_worker_restart_after_infrastructure_failures("scraper:default")
 
         kill.assert_called_once()
         exit_process.assert_called_once()
@@ -344,7 +375,7 @@ class MonitorSettingsTests(TestCase):
         MonitorRun.objects.create(status=MonitorRun.Status.FAILED, error="pthread_create: Resource temporarily unavailable")
 
         with self.assertLogs("monitor.services", level="ERROR"):
-            request_worker_restart_after_infrastructure_failures()
+            request_worker_restart_after_infrastructure_failures("scraper:default")
 
         kill.assert_not_called()
         exit_process.assert_not_called()

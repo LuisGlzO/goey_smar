@@ -6,9 +6,12 @@ from monitor.services import run_monitor
 class Command(BaseCommand):
     help = "Ejecuta una revision inmediata de Guardado para mas tarde."
 
+    def add_arguments(self, parser):
+        parser.add_argument("--account", required=True, choices=("amazon_a", "amazon_b"))
+
     def handle(self, *args, **options):
         try:
-            run = run_monitor()
+            run = run_monitor(options["account"])
         except Exception as exc:
             raise CommandError(str(exc)) from exc
 
