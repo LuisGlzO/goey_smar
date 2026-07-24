@@ -67,6 +67,66 @@ class AlertDecisionTests(TestCase):
         self.assertFalse(should_send)
         self.assertEqual(reason, "cooldown")
 
+    def test_creators_api_never_detects_restock(self):
+        first = self.make_check()
+        alert = Alert.objects.create(
+            product=self.product, product_check=first, status=Alert.Status.SENT,
+            reason="first_availability",
+        )
+        Alert.objects.filter(pk=alert.pk).update(
+            created_at=timezone.now() - timedelta(minutes=61)
+        )
+        ProductCheck.objects.create(
+            run=self.run,
+            product=self.product,
+            source=ObservationSource.CREATORS_API,
+            availability=ProductCheck.Availability.UNAVAILABLE,
+        )
+        current = ProductCheck.objects.create(
+            run=self.run,
+            product=self.product,
+            source=ObservationSource.CREATORS_API,
+            availability=ProductCheck.Availability.AVAILABLE,
+            price=Decimal("900"),
+            move_to_cart_visible=True,
+        )
+
+        should_send, reason = alert_decision(self.product, current)
+
+        self.assertTrue(should_send)
+        self.assertEqual(reason, "cooldown_elapsed")
+
+    def test_scraper_restock_ignores_newer_unknown_creators_check(self):
+        first = self.make_check()
+        Alert.objects.create(
+            product=self.product, product_check=first, status=Alert.Status.SENT,
+            reason="first_availability",
+        )
+        ProductCheck.objects.create(
+            run=self.run,
+            product=self.product,
+            source=ObservationSource.CREATORS_API,
+            availability=ProductCheck.Availability.UNKNOWN,
+        )
+
+        should_send, reason = alert_decision(self.product, self.make_check())
+
+        self.assertFalse(should_send)
+        self.assertEqual(reason, "cooldown")
+
+    def test_scraper_still_detects_restock_from_its_own_checks(self):
+        first = self.make_check()
+        Alert.objects.create(
+            product=self.product, product_check=first, status=Alert.Status.SENT,
+            reason="first_availability",
+        )
+        self.make_check(availability=ProductCheck.Availability.UNAVAILABLE)
+
+        should_send, reason = alert_decision(self.product, self.make_check())
+
+        self.assertTrue(should_send)
+        self.assertEqual(reason, "restock")
+
     def test_effective_cooldown_follows_stepped_sequence_and_cap(self):
         self.product.cooldown_minutes = 20
         self.product.save(update_fields=("cooldown_minutes",))

@@ -1,8 +1,14 @@
+from django.conf import settings
 from django.core.management.base import BaseCommand
-from playwright.sync_api import sync_playwright
 
 from monitor.scraper import validate_profile_owner
 from monitor.services import scraper_profile_dir
+
+
+def get_sync_playwright():
+    from playwright.sync_api import sync_playwright
+
+    return sync_playwright
 
 
 class Command(BaseCommand):
@@ -14,7 +20,7 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         profile_dir = scraper_profile_dir(options["account"])
         validate_profile_owner(profile_dir, options["account"])
-        with sync_playwright() as playwright:
+        with get_sync_playwright()() as playwright:
             context = playwright.chromium.launch_persistent_context(profile_dir, headless=False, locale="es-MX")
             page = context.pages[0] if context.pages else context.new_page()
             page.goto(settings.AMAZON_SAVED_ITEMS_URL)

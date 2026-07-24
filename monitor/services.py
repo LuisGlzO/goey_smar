@@ -229,9 +229,13 @@ def alert_decision(product, check, now=None, monitor_settings=None):
     if sent_alerts.filter(created_at__gte=start_of_day).count() >= product.max_alerts_per_day:
         return False, "daily_limit"
 
-    previous = ProductCheck.objects.filter(
-        product=product, checked_at__lt=check.checked_at
-    ).exclude(source=ObservationSource.MANUAL).first()
+    previous = None
+    if check.source == ObservationSource.SCRAPER:
+        previous = ProductCheck.objects.filter(
+            product=product,
+            source=ObservationSource.SCRAPER,
+            checked_at__lt=check.checked_at,
+        ).first()
     last_sent = sent_alerts.first()
     if not last_sent:
         return True, "first_availability"

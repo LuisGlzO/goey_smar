@@ -334,6 +334,10 @@ escalonamiento.
 El sistema ejecuta dos motores independientes: Playwright y Creators API. Ambos
 registran verificaciones y solicitan el envío al mismo servicio central, por lo
 que comparten cooldown anti-falso-restock, cooldown por producto y límite diario.
+Solo el scraper puede confirmar una reposición a partir de sus propias
+verificaciones anteriores. Creators API nunca genera el motivo `restock`; una
+disponibilidad de esta fuente continúa por las reglas de primera disponibilidad,
+caída significativa de precio o cooldown terminado.
 Configure la tarea API con `AMAZON_CREATORS_API_INTERVAL_SECONDS`,
 `AMAZON_CREATORS_API_BATCH_SIZE` y `AMAZON_CREATORS_API_BATCH_DELAY_SECONDS`.
 

@@ -1,0 +1,68 @@
+{% extends "admin/base.html" %}
+{% load i18n %}
+
+{% block title %}{% if subtitle %}{{ subtitle }} | {% endif %}{{ title }} | {{ site_title|default:"Goey SMAR" }}{% endblock %}
+
+{% block branding %}
+<div id="site-name"><a href="{% url 'admin:index' %}">{{ site_header|default:"Administración Goey SMAR" }}</a></div>
+{% if user.is_anonymous %}
+  {% include "admin/color_theme_toggle.html" %}
+{% endif %}
+{% endblock %}
+
+{% block nav-global %}
+<a class="goey-admin-home" href="{% url 'dashboard' %}">← Panel de herramientas</a>
+{% endblock %}
+
+{% block extrastyle %}
+{{ block.super }}
+<style>
+  .goey-admin-home {
+    display: inline-flex;
+    align-items: center;
+    min-height: 34px;
+    padding: 0 13px;
+    border: 1px solid rgba(255, 255, 255, .3);
+    border-radius: 8px;
+    color: var(--header-link-color);
+    font-weight: 600;
+    text-decoration: none;
+    white-space: nowrap;
+  }
+  .goey-admin-home:hover,
+  .goey-admin-home:focus {
+    background: rgba(255, 255, 255, .12);
+    color: var(--header-link-color);
+  }
+  #changelist-form .results {
+    scrollbar-color: var(--body-quiet-color) var(--darkened-bg);
+    scrollbar-width: auto;
+    scrollbar-gutter: stable;
+  }
+  #changelist-form .results::-webkit-scrollbar {
+    height: 14px;
+  }
+  #changelist-form .results::-webkit-scrollbar-track {
+    background: var(--darkened-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 999px;
+  }
+  #changelist-form .results::-webkit-scrollbar-thumb {
+    min-width: 44px;
+    background: var(--body-quiet-color);
+    border: 3px solid var(--darkened-bg);
+    border-radius: 999px;
+  }
+  #changelist-form .results::-webkit-scrollbar-thumb:hover {
+    background: var(--body-loud-color);
+  }
+  @media (max-width: 767px) {
+    .goey-admin-home {
+      order: 3;
+      width: 100%;
+      justify-content: center;
+      margin-top: 8px;
+    }
+  }
+</style>
+{% endblock %}
