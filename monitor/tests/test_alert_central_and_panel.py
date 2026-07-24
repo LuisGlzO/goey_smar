@@ -53,6 +53,38 @@ class CentralAlertServiceTests(TestCase):
         self.assertEqual(result.reason, "cooldown")
         send.assert_not_called()
 
+    @patch("monitor.services.send_product_alert", return_value="104")
+    def test_manual_request_obeys_effective_cooldown_without_resetting_level(self, send):
+        self.product.cooldown_minutes = 20
+        self.product.save(update_fields=("cooldown_minutes",))
+        old_check = self.check()
+        elapsed = Alert.objects.create(
+            product=self.product, product_check=old_check, source=ObservationSource.SCRAPER,
+            status=Alert.Status.SENT, reason="cooldown_elapsed",
+        )
+        Alert.objects.filter(pk=elapsed.pk).update(created_at=timezone.now() - timedelta(minutes=30))
+
+        blocked = request_product_alert(
+            self.product, self.check(ObservationSource.MANUAL, price=None),
+            ObservationSource.MANUAL, monitor_settings=self.settings,
+        )
+        self.assertEqual(blocked.reason, "cooldown")
+
+        Alert.objects.filter(pk=elapsed.pk).update(created_at=timezone.now() - timedelta(minutes=41))
+        sent = request_product_alert(
+            self.product, self.check(ObservationSource.MANUAL, price=None),
+            ObservationSource.MANUAL, monitor_settings=self.settings,
+        )
+        self.assertEqual(sent.status, Alert.Status.SENT)
+
+        Alert.objects.filter(pk=sent.pk).update(created_at=timezone.now() - timedelta(minutes=30))
+        still_blocked = request_product_alert(
+            self.product, self.check(ObservationSource.MANUAL, price=None),
+            ObservationSource.MANUAL, monitor_settings=self.settings,
+        )
+        self.assertEqual(still_blocked.reason, "cooldown")
+        self.assertEqual(send.call_count, 1)
+
     @override_settings(ALERT_RESERVATION_SECONDS=60)
     @patch("monitor.services.send_product_alert", return_value="103")
     def test_live_reservation_prevents_duplicate(self, send):
@@ -125,6 +157,24 @@ class ManualAlertPanelTests(TestCase):
         response = self.client.get(reverse("manual_alerts"))
         self.assertContains(response, "Activo")
         self.assertNotContains(response, "Inactivo")
+
+    def test_panel_shows_remaining_effective_cooldown(self):
+        self.active.cooldown_minutes = 20
+        self.active.save(update_fields=("cooldown_minutes",))
+        check = ProductCheck.objects.create(
+            product=self.active, availability=ProductCheck.Availability.AVAILABLE,
+            price=Decimal("900"), move_to_cart_visible=True,
+        )
+        alert = Alert.objects.create(
+            product=self.active, product_check=check, status=Alert.Status.SENT,
+            reason="cooldown_elapsed",
+        )
+        Alert.objects.filter(pk=alert.pk).update(created_at=timezone.now() - timedelta(minutes=10))
+
+        self.client.login(username="cliente", password="secret")
+        response = self.client.get(reverse("manual_alerts"))
+
+        self.assertContains(response, "Cooldown: 30 min")
 
     @patch("monitor.services.send_product_alert", return_value="301")
     def test_manual_post_sends_and_audits_user(self, send):

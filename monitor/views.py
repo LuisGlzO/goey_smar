@@ -11,8 +11,11 @@ from django.utils import timezone
 
 from .amazon_creators import safe_get_product_content
 from .forms import ProductBulkUpdateForm, ProductForm
-from .models import Alert, MonitorSettings, ObservationSource, Product, ProductCheck, ScraperAccount
-from .services import request_product_alert
+from .models import (
+    Alert, MonitorRun, MonitorSettings, ObservationSource, Product, ProductCheck,
+    ScraperAccount,
+)
+from .services import effective_cooldown_minutes, request_product_alert
 
 
 REASON_MESSAGES = {
@@ -28,6 +31,50 @@ REASON_MESSAGES = {
 @login_required
 def dashboard(request):
     return render(request, "monitor/dashboard.html")
+
+
+@login_required
+@permission_required("monitor.view_product", raise_exception=True)
+def catalog_cart_comparison(request):
+    accounts = list(ScraperAccount.objects.all())
+    account_snapshots = []
+    cart_items = []
+    for account in accounts:
+        run = (
+            MonitorRun.objects.filter(
+                worker_key=f"scraper:{account.key}",
+                status=MonitorRun.Status.SUCCESS,
+            )
+            .order_by("-finished_at", "-pk")
+            .first()
+        )
+        account_snapshots.append({"account": account, "run": run})
+        if run:
+            cart_items.extend(
+                list(run.cart_items.select_related("scraper_account").all())
+            )
+
+    catalog_products = list(Product.objects.select_related("scraper_account"))
+    catalog_asins = {product.asin for product in catalog_products}
+    cart_asins_by_account = {account.key: set() for account in accounts}
+    accounts_with_snapshot = {
+        snapshot["account"].key for snapshot in account_snapshots if snapshot["run"]
+    }
+    for item in cart_items:
+        cart_asins_by_account[item.scraper_account_id].add(item.asin)
+
+    only_in_cart = [item for item in cart_items if item.asin not in catalog_asins]
+    only_in_catalog = [
+        product
+        for product in catalog_products
+        if product.scraper_account_id in accounts_with_snapshot
+        if product.asin not in cart_asins_by_account.get(product.scraper_account_id, set())
+    ]
+    return render(request, "monitor/catalog_cart_comparison.html", {
+        "only_in_cart": only_in_cart,
+        "only_in_catalog": only_in_catalog,
+        "account_snapshots": account_snapshots,
+    })
 
 
 def _refresh_product_image(product):
@@ -127,7 +174,7 @@ def _cooldown_state(product, monitor_settings, now):
     anti_until = last_sent.created_at + timedelta(
         minutes=monitor_settings.anti_false_restock_cooldown_minutes
     )
-    normal_until = last_sent.created_at + timedelta(minutes=product.cooldown_minutes)
+    normal_until = last_sent.created_at + timedelta(minutes=effective_cooldown_minutes(product))
     blocked_until = max(anti_until, normal_until)
     if blocked_until <= now:
         return {"label": "Disponible", "blocked": False, "remaining_minutes": 0}

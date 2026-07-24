@@ -13,6 +13,7 @@ from monitor.services import (
     alert_decision,
     consecutive_infrastructure_failures,
     determine_availability,
+    effective_cooldown_minutes,
     process_missing_product,
     recover_stale_monitor_runs,
     request_worker_restart_after_infrastructure_failures,
@@ -65,6 +66,100 @@ class AlertDecisionTests(TestCase):
         should_send, reason = alert_decision(self.product, self.make_check())
         self.assertFalse(should_send)
         self.assertEqual(reason, "cooldown")
+
+    def test_effective_cooldown_follows_stepped_sequence_and_cap(self):
+        self.product.cooldown_minutes = 20
+        self.product.save(update_fields=("cooldown_minutes",))
+        check = self.make_check()
+        Alert.objects.create(
+            product=self.product, product_check=check, status=Alert.Status.SENT,
+            reason="first_availability",
+        )
+        self.assertEqual(effective_cooldown_minutes(self.product), 20)
+
+        for expected in (40, 80, 160, 320, 360, 360):
+            Alert.objects.create(
+                product=self.product, product_check=check, status=Alert.Status.SENT,
+                reason="cooldown_elapsed",
+            )
+            self.assertEqual(effective_cooldown_minutes(self.product), expected)
+
+    def test_alert_decision_waits_for_effective_cooldown(self):
+        self.product.cooldown_minutes = 20
+        self.product.max_alerts_per_day = 10
+        self.product.save(update_fields=("cooldown_minutes", "max_alerts_per_day"))
+        check = self.make_check()
+        alert = Alert.objects.create(
+            product=self.product, product_check=check, status=Alert.Status.SENT,
+            reason="cooldown_elapsed",
+        )
+        Alert.objects.filter(pk=alert.pk).update(
+            created_at=timezone.now() - timedelta(minutes=30)
+        )
+
+        should_send, reason = alert_decision(self.product, self.make_check())
+        self.assertFalse(should_send)
+        self.assertEqual(reason, "cooldown")
+
+        Alert.objects.filter(pk=alert.pk).update(
+            created_at=timezone.now() - timedelta(minutes=41)
+        )
+        should_send, reason = alert_decision(self.product, self.make_check())
+        self.assertTrue(should_send)
+        self.assertEqual(reason, "cooldown_elapsed")
+
+    def test_effective_cooldown_resets_after_automatic_reset_reasons(self):
+        self.product.cooldown_minutes = 20
+        self.product.save(update_fields=("cooldown_minutes",))
+        check = self.make_check()
+        for reset_reason in ("first_availability", "restock", "significant_price_drop"):
+            Alert.objects.all().delete()
+            Alert.objects.create(
+                product=self.product, product_check=check, status=Alert.Status.SENT,
+                reason="cooldown_elapsed",
+            )
+            Alert.objects.create(
+                product=self.product, product_check=check, status=Alert.Status.SENT,
+                reason=reset_reason,
+            )
+            self.assertEqual(effective_cooldown_minutes(self.product), 20)
+
+    def test_manual_failed_and_skipped_alerts_do_not_change_stepped_level(self):
+        self.product.cooldown_minutes = 20
+        self.product.save(update_fields=("cooldown_minutes",))
+        check = self.make_check()
+        Alert.objects.create(
+            product=self.product, product_check=check, status=Alert.Status.SENT,
+            reason="cooldown_elapsed",
+        )
+        Alert.objects.create(
+            product=self.product, product_check=check, source=ObservationSource.MANUAL,
+            status=Alert.Status.SENT, reason="manual_request",
+        )
+        Alert.objects.create(
+            product=self.product, product_check=check, status=Alert.Status.FAILED,
+            reason="cooldown_elapsed",
+        )
+        Alert.objects.create(
+            product=self.product, product_check=check, status=Alert.Status.SKIPPED,
+            reason="first_availability",
+        )
+        self.assertEqual(effective_cooldown_minutes(self.product), 40)
+
+    def test_effective_cooldown_handles_zero_large_base_and_no_history(self):
+        self.product.cooldown_minutes = 0
+        self.product.save(update_fields=("cooldown_minutes",))
+        self.assertEqual(effective_cooldown_minutes(self.product), 0)
+        check = self.make_check()
+        Alert.objects.create(
+            product=self.product, product_check=check, status=Alert.Status.SENT,
+            reason="cooldown_elapsed",
+        )
+        self.assertEqual(effective_cooldown_minutes(self.product), 0)
+
+        self.product.cooldown_minutes = 480
+        self.product.save(update_fields=("cooldown_minutes",))
+        self.assertEqual(effective_cooldown_minutes(self.product), 480)
 
     def test_anti_false_restock_cooldown_blocks_recent_same_product_alert(self):
         monitor_settings = MonitorSettings(anti_false_restock_cooldown_minutes=5)

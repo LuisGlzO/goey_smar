@@ -2,12 +2,18 @@
 {% block title %}Inicio | Goey SMAR{% endblock %}
 {% block content %}
 <div class="workspace">
-  <aside class="sidebar">
-    <div class="sidebar-title"><span class="brand-mark">G</span><span><strong>Goey SMAR</strong><small>Navegación</small></span></div>
+  <button class="mobile-menu-button" type="button" data-sidebar-open aria-controls="dashboard-sidebar" aria-expanded="false" style="display:none">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+    <span>Menú de herramientas</span>
+  </button>
+  <button class="sidebar-backdrop" type="button" data-sidebar-close aria-label="Cerrar menú" style="display:none"></button>
+  <aside class="sidebar" id="dashboard-sidebar" data-sidebar aria-label="Navegación principal">
+    <div class="sidebar-title"><span class="brand-mark">G</span><span><strong>Goey SMAR</strong><small>Navegación</small></span><button class="sidebar-close" type="button" data-sidebar-close aria-label="Cerrar menú" style="display:none">×</button></div>
     <nav class="sidebar-nav" aria-label="Herramientas">
       <span class="nav-label">Operación</span>
       <a class="nav-item active" href="{% url 'dashboard' %}"><span class="nav-icon">⌂</span><span>Inicio</span></a>
       {% if perms.monitor.view_product %}<a class="nav-item" href="{% url 'products' %}"><span class="nav-icon">▦</span><span>Productos</span></a>{% endif %}
+      {% if perms.monitor.view_product %}<a class="nav-item" href="{% url 'catalog_cart_comparison' %}"><span class="nav-icon">≋</span><span>Catálogo vs. carritos</span></a>{% endif %}
       {% if perms.monitor.send_manual_alert %}<a class="nav-item" href="{% url 'manual_alerts' %}"><span class="nav-icon">↗</span><span>Alertas manuales</span></a>{% endif %}
       {% if user.is_staff %}<span class="nav-label">Sistema</span><a class="nav-item" href="{% url 'admin:index' %}"><span class="nav-icon">⚙</span><span>Administración</span></a>{% endif %}
     </nav>
@@ -17,6 +23,7 @@
     <div class="section-head"><div><span class="eyebrow">Herramientas</span><h2>Centro de operaciones</h2><p>Selecciona el módulo que quieres utilizar.</p></div></div>
     <div class="tool-grid">
       {% if perms.monitor.view_product %}<a class="tool-card" href="{% url 'products' %}"><div class="tool-top"><span class="tool-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5.5 12 2l8 3.5v13L12 22l-8-3.5Z"/><path d="m4 5.5 8 3.5 8-3.5M12 9v13"/></svg></span><span class="tag">Catálogo</span></div><h3>Productos</h3><p>Consulta, crea y configura los productos monitoreados por el sistema.</p><span class="tool-action">Abrir módulo <span class="arrow">→</span></span></a>{% endif %}
+      {% if perms.monitor.view_product %}<a class="tool-card" href="{% url 'catalog_cart_comparison' %}"><div class="tool-top"><span class="tool-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 7h11M8 12h11M8 17h11"/><path d="m3 7 1 1 2-2M3 12l1 1 2-2M3 17l1 1 2-2"/></svg></span><span class="tag">Conciliación</span></div><h3>Catálogo vs. carritos</h3><p>Encuentra productos que solo existen en los carritos o solo en el catálogo.</p><span class="tool-action">Abrir módulo <span class="arrow">→</span></span></a>{% endif %}
       {% if perms.monitor.send_manual_alert %}<a class="tool-card" href="{% url 'manual_alerts' %}"><div class="tool-top"><span class="tool-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></svg></span><span class="tag">Alertas</span></div><h3>Alertas manuales</h3><p>Consulta productos activos y publica una alerta inmediata en Telegram.</p><span class="tool-action">Abrir módulo <span class="arrow">→</span></span></a>{% endif %}
       {% if user.is_staff %}<a class="tool-card" href="{% url 'admin:index' %}"><div class="tool-top"><span class="tool-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1V21h-4v-.09A1.7 1.7 0 0 0 8.6 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1-.4H3v-4h.09A1.7 1.7 0 0 0 4.6 8.6a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1V3h4v.09A1.7 1.7 0 0 0 15.4 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.1.38.31.72.6 1 .29.27.64.4 1 .4h.09v4H21a1.7 1.7 0 0 0-1.6.6Z"/></svg></span><span class="tag">Sistema</span></div><h3>Administración</h3><p>Gestiona productos, parámetros del monitor y consulta la auditoría.</p><span class="tool-action">Abrir módulo <span class="arrow">→</span></span></a>{% endif %}
     </div>

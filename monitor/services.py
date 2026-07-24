@@ -14,13 +14,22 @@ from django.utils import timezone
 from .email import send_monitor_failure_email
 from .amazon_creators import creators_api_is_configured, get_products_content
 from .errors import is_infrastructure_error
-from .models import Alert, MonitorRun, MonitorSettings, ObservationSource, Product, ProductCheck, ScraperAccount
+from .models import (
+    Alert, CartSnapshotItem, MonitorRun, MonitorSettings, ObservationSource,
+    Product, ProductCheck, ScraperAccount,
+)
 from .performance import MonitorPerformance
 from .telegram import send_monitor_failure_alert, send_product_alert
 
 logger = logging.getLogger(__name__)
 STALE_RUN_ERROR = "stale_run_recovered"
 WORKER_RESTART_EXIT_CODE = 70
+MAX_STEPPED_COOLDOWN_MINUTES = 360
+COOLDOWN_RESET_REASONS = {
+    "first_availability",
+    "restock",
+    "significant_price_drop",
+}
 
 
 @dataclass
@@ -178,6 +187,28 @@ def anti_false_restock_cooldown_active(sent_alerts, monitor_settings, now):
     return sent_alerts.filter(created_at__gte=now - timedelta(minutes=cooldown_minutes)).exists()
 
 
+def effective_cooldown_minutes(product):
+    """Return the current cooldown without mutating the product's configured base."""
+    effective = product.cooldown_minutes
+    maximum = max(product.cooldown_minutes, MAX_STEPPED_COOLDOWN_MINUTES)
+    automatic_reasons = (
+        Alert.objects.filter(product=product, status=Alert.Status.SENT)
+        .exclude(source=ObservationSource.MANUAL)
+        .order_by("-created_at", "-pk")
+        .values_list("reason", flat=True)
+    )
+    for reason in automatic_reasons:
+        if reason == "cooldown_elapsed":
+            effective = min(effective * 2, maximum)
+            continue
+        # Reset reasons and unknown historical reasons both end the current
+        # consecutive cooldown-elapsed streak at the configured base.
+        if reason in COOLDOWN_RESET_REASONS:
+            break
+        break
+    return effective
+
+
 def alert_decision(product, check, now=None, monitor_settings=None):
     now = now or timezone.now()
     monitor_settings = monitor_settings or MonitorSettings.load()
@@ -213,7 +244,7 @@ def alert_decision(product, check, now=None, monitor_settings=None):
         if drop >= product.significant_price_drop_percent:
             return True, "significant_price_drop"
 
-    if now - last_sent.created_at >= timedelta(minutes=product.cooldown_minutes):
+    if now - last_sent.created_at >= timedelta(minutes=effective_cooldown_minutes(product)):
         return True, "cooldown_elapsed"
     return False, "cooldown"
 
@@ -230,7 +261,7 @@ def manual_alert_decision(product, now=None, monitor_settings=None):
     if sent_alerts.filter(created_at__gte=start_of_day).count() >= product.max_alerts_per_day:
         return False, "daily_limit"
     last_sent = sent_alerts.first()
-    if last_sent and now - last_sent.created_at < timedelta(minutes=product.cooldown_minutes):
+    if last_sent and now - last_sent.created_at < timedelta(minutes=effective_cooldown_minutes(product)):
         return False, "cooldown"
     return True, "manual_request"
 
@@ -368,6 +399,19 @@ def run_monitor(account_key):
                 profile_dir=profile_dir,
                 timing=timing,
             )
+        with timing.stage("store_cart_snapshot", item_count=len(items)):
+            CartSnapshotItem.objects.bulk_create([
+                CartSnapshotItem(
+                    run=run,
+                    scraper_account_id=account_key,
+                    asin=item.asin,
+                    source=item.source,
+                    price=item.price,
+                    product_url=item.product_url,
+                    raw_text=item.raw_text,
+                )
+                for item in items
+            ])
         with timing.stage("load_active_products"):
             products = {
                 product.asin: product

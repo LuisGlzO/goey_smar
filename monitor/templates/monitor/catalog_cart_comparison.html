@@ -1,0 +1,61 @@
+{% extends "monitor/base.html" %}
+{% block title %}Comparación de catálogo y carritos | Goey SMAR{% endblock %}
+{% block content %}
+<div class="page-heading">
+  <div>
+    <a class="back" href="{% url 'dashboard' %}">← Centro de herramientas</a>
+    <h1>Catálogo vs. carritos</h1>
+    <p>Compara el catálogo del sistema con la última lectura exitosa de cada cuenta de Amazon.</p>
+  </div>
+</div>
+
+<div class="snapshot-status">
+  {% for snapshot in account_snapshots %}
+    <div>
+      <strong>{{ snapshot.account.name }}</strong>
+        {% if snapshot.run %}<span>Actualizado {{ snapshot.run.finished_at|date:"d/m/Y H:i" }}</span>
+        {% else %}<span class="snapshot-missing">Sin lecturas exitosas</span>{% endif %}
+    </div>
+  {% endfor %}
+</div>
+
+<section class="comparison-section">
+  <div class="section-head">
+    <div><span class="eyebrow">Fuera del catálogo</span><h2>En carritos, no en el sistema</h2><p>Productos detectados en cualquiera de las dos cuentas que todavía no están registrados.</p></div>
+    <span class="count">{{ only_in_cart|length }} productos</span>
+  </div>
+  <div class="comparison-list">
+    {% for item in only_in_cart %}
+      <article class="comparison-row">
+        <span class="comparison-icon">?</span>
+        <span class="comparison-identity"><strong>{{ item.raw_text|truncatechars:110|default:"Producto sin nombre disponible" }}</strong><code>{{ item.asin }}</code></span>
+        <span><span class="status neutral">{{ item.scraper_account.name }}</span><small>{{ item.get_source_display|default:item.source }}</small></span>
+        <span>{% if item.price %}<strong>${{ item.price }}</strong>{% else %}<span class="muted">Sin precio</span>{% endif %}</span>
+        <span>{% if item.product_url %}<a class="row-action" href="{{ item.product_url }}" target="_blank" rel="noopener">Ver en Amazon ↗</a>{% endif %}</span>
+      </article>
+    {% empty %}
+      <div class="empty-card">Todos los productos leídos en los carritos existen en el catálogo.</div>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="comparison-section">
+  <div class="section-head">
+    <div><span class="eyebrow">Fuera del carrito</span><h2>En el sistema, no en su carrito</h2><p>Productos del catálogo ausentes en la última lectura de la cuenta que tienen asignada.</p></div>
+    <span class="count">{{ only_in_catalog|length }} productos</span>
+  </div>
+  <div class="comparison-list">
+    {% for product in only_in_catalog %}
+      <article class="comparison-row">
+        <span class="catalog-image"><span>{{ product.name|slice:":2"|upper }}</span>{% if product.image_url %}<img src="{{ product.image_url }}" alt="" loading="lazy" onerror="this.remove()">{% endif %}</span>
+        <span class="comparison-identity"><strong>{{ product.name }}</strong><code>{{ product.asin }}</code></span>
+        <span><span class="status neutral">{{ product.scraper_account.name }}</span><small>{% if product.is_active %}Activo{% else %}Inactivo{% endif %}</small></span>
+        <span><strong>Máx. ${{ product.max_price }}</strong></span>
+        <span><a class="row-action" href="{% url 'product_edit' product.pk %}">Editar →</a></span>
+      </article>
+    {% empty %}
+      <div class="empty-card">Todos los productos del catálogo están presentes en su carrito asignado.</div>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}

@@ -317,6 +317,18 @@ primera disponibilidad, una reposición, una reducción significativa o ya termi
 el cooldown. Se aplican además el límite diario y la prevención de duplicados
 durante cooldown.
 
+El cooldown configurado en cada producto es su valor base. Cuando una alerta
+automática se envía porque terminó ese cooldown (`cooldown_elapsed`), el
+intervalo para la siguiente alerta se duplica hasta un máximo de 360 minutos
+(por ejemplo: 20, 40, 80, 160, 320, 360). Una primera disponibilidad, una
+reposición o una caída significativa de precio reinicia el intervalo al valor
+base. Si el valor base es mayor a 360 minutos, se respeta sin reducirlo.
+
+Las alertas manuales respetan el intervalo efectivo y reinician su conteo de
+tiempo, pero no aumentan ni reinician el nivel alcanzado. El cooldown
+anti-falso-restock se evalúa de forma independiente y no participa en este
+escalonamiento.
+
 ## 9. Monitores y alertas manuales
 
 El sistema ejecuta dos motores independientes: Playwright y Creators API. Ambos

@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Alert, MonitorRun, MonitorSettings, Product, ProductCheck, ScraperAccount
+from .models import Alert, CartSnapshotItem, MonitorRun, MonitorSettings, Product, ProductCheck, ScraperAccount
 
 
 @admin.register(ScraperAccount)
@@ -36,6 +36,14 @@ class ProductCheckAdmin(admin.ModelAdmin):
     list_filter = ("source", "availability", "move_to_cart_visible", "unavailable_message_visible")
     search_fields = ("product__asin", "product__name")
     readonly_fields = ("run", "product", "source", "requested_by", "checked_at", "availability", "price", "move_to_cart_visible", "unavailable_message_visible", "product_url", "raw_text")
+
+
+@admin.register(CartSnapshotItem)
+class CartSnapshotItemAdmin(admin.ModelAdmin):
+    list_display = ("asin", "scraper_account", "source", "price", "run")
+    list_filter = ("scraper_account", "source")
+    search_fields = ("asin", "raw_text")
+    readonly_fields = ("run", "scraper_account", "asin", "source", "price", "product_url", "raw_text")
 
 
 @admin.register(Alert)

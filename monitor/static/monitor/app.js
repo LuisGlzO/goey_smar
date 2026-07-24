@@ -23,6 +23,35 @@
     if(root.dataset.themePreference==='system')applyTheme('system');
   });
 
+  const sidebar=document.querySelector('[data-sidebar]');
+  const sidebarOpen=document.querySelector('[data-sidebar-open]');
+  const sidebarClosers=document.querySelectorAll('[data-sidebar-close]');
+  if(sidebar&&sidebarOpen){
+    const mobileSidebar=matchMedia('(max-width: 950px)');
+    const setSidebar=open=>{
+      const shouldOpen=open&&mobileSidebar.matches;
+      document.body.classList.toggle('sidebar-is-open',shouldOpen);
+      sidebarOpen.setAttribute('aria-expanded',String(shouldOpen));
+      sidebar.setAttribute('aria-hidden',String(mobileSidebar.matches&&!shouldOpen));
+      if(shouldOpen)sidebar.querySelector('a,button')?.focus();
+      else if(open===false&&mobileSidebar.matches)sidebarOpen.focus();
+    };
+    sidebarOpen.addEventListener('click',()=>setSidebar(true));
+    sidebarClosers.forEach(element=>element.addEventListener('click',()=>setSidebar(false)));
+    sidebar.querySelectorAll('a').forEach(link=>link.addEventListener('click',()=>{
+      if(mobileSidebar.matches)setSidebar(false);
+    }));
+    document.addEventListener('keydown',event=>{
+      if(event.key==='Escape'&&document.body.classList.contains('sidebar-is-open'))setSidebar(false);
+    });
+    mobileSidebar.addEventListener('change',event=>{
+      document.body.classList.remove('sidebar-is-open');
+      sidebarOpen.setAttribute('aria-expanded','false');
+      sidebar.setAttribute('aria-hidden',String(event.matches));
+    });
+    sidebar.setAttribute('aria-hidden',String(mobileSidebar.matches));
+  }
+
   const alertDialog=document.querySelector('#alert-dialog');
   if(alertDialog){
     document.querySelectorAll('[data-product-card]').forEach(card=>card.addEventListener('click',()=>{

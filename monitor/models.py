@@ -163,6 +163,25 @@ class ProductCheck(models.Model):
         indexes = [models.Index(fields=("product", "-checked_at"))]
 
 
+class CartSnapshotItem(models.Model):
+    run = models.ForeignKey(MonitorRun, on_delete=models.CASCADE, related_name="cart_items")
+    scraper_account = models.ForeignKey(
+        ScraperAccount, on_delete=models.CASCADE, related_name="cart_snapshot_items"
+    )
+    asin = models.CharField(max_length=10)
+    source = models.CharField(max_length=12)
+    price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    product_url = models.URLField(max_length=1000, blank=True)
+    raw_text = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ("scraper_account_id", "asin")
+        constraints = [
+            models.UniqueConstraint(fields=("run", "asin"), name="unique_cart_item_per_run")
+        ]
+        indexes = [models.Index(fields=("scraper_account", "asin"))]
+
+
 class Alert(models.Model):
     class Status(models.TextChoices):
         PROCESSING = "processing", "Procesando"
