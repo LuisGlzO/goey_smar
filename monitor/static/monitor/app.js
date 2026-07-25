@@ -52,6 +52,59 @@
     sidebar.setAttribute('aria-hidden',String(mobileSidebar.matches));
   }
 
+  const asinInput=document.querySelector('[data-asin-input]');
+  const asinChips=document.querySelector('[data-asin-chips]');
+  if(asinInput&&asinChips){
+    const renderAsinChips=()=>{
+      const values=[...new Set(asinInput.value.toUpperCase().split(/[\s,;]+/).filter(Boolean))];
+      asinChips.replaceChildren(...values.slice(0,50).map(value=>{
+        const chip=document.createElement('span');
+        chip.className=/^[A-Z0-9]{10}$/.test(value)?'asin-chip':'asin-chip invalid';
+        chip.textContent=value;
+        return chip;
+      }));
+    };
+    asinInput.addEventListener('input',renderAsinChips);
+    renderAsinChips();
+  }
+
+  const copyFeedback=document.querySelector('[data-copy-feedback]');
+  const copyText=async text=>{
+    if(navigator.clipboard?.writeText){
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+    const temporary=document.createElement('textarea');
+    temporary.value=text;
+    temporary.style.position='fixed';
+    temporary.style.opacity='0';
+    document.body.appendChild(temporary);
+    temporary.select();
+    document.execCommand('copy');
+    temporary.remove();
+  };
+  document.querySelectorAll('[data-copy-url]').forEach(button=>button.addEventListener('click',async()=>{
+    try{
+      await copyText(button.dataset.url);
+      button.textContent='Copiado ✓';
+      copyFeedback.textContent='Enlace copiado al portapapeles.';
+      setTimeout(()=>{button.textContent='Copiar';},1800);
+    }catch{
+      copyFeedback.textContent='No se pudo copiar automáticamente. Selecciona el enlace y cópialo manualmente.';
+    }
+  }));
+  document.querySelector('[data-copy-all]')?.addEventListener('click',async event=>{
+    const urls=[...document.querySelectorAll('[data-generated-url]')].map(input=>input.value).filter(Boolean);
+    try{
+      await copyText(urls.join('\n'));
+      event.currentTarget.textContent='Copiados ✓';
+      copyFeedback.textContent=`${urls.length} enlace${urls.length===1?'':'s'} copiado${urls.length===1?'':'s'} al portapapeles.`;
+      setTimeout(()=>{event.currentTarget.textContent='Copiar todos';},1800);
+    }catch{
+      copyFeedback.textContent='No se pudieron copiar automáticamente. Copia los enlaces individualmente.';
+    }
+  });
+
   const alertDialog=document.querySelector('#alert-dialog');
   if(alertDialog){
     document.querySelectorAll('[data-product-card]').forEach(card=>card.addEventListener('click',()=>{

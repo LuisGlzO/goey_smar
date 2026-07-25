@@ -9,6 +9,7 @@ urlpatterns = [
     path("productos/<int:product_id>/editar/", views.product_edit, name="product_edit"),
     path("productos/actualizar-seleccion/", views.products_bulk_update, name="products_bulk_update"),
     path("comparacion-catalogo-carritos/", views.catalog_cart_comparison, name="catalog_cart_comparison"),
+    path("generador-enlaces/", views.affiliate_link_generator, name="affiliate_link_generator"),
     path("alertas/", views.manual_alerts, name="manual_alerts"),
     path("alertas/<int:product_id>/enviar/", views.send_manual_alert, name="send_manual_alert"),
 ]

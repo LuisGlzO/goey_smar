@@ -9,8 +9,8 @@ from django.http import HttpResponseNotAllowed
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 
-from .amazon_creators import safe_get_product_content
-from .forms import ProductBulkUpdateForm, ProductForm
+from .amazon_creators import creators_api_is_configured, get_products_content, safe_get_product_content
+from .forms import AffiliateLinkGeneratorForm, ProductBulkUpdateForm, ProductForm
 from .models import (
     Alert, MonitorRun, MonitorSettings, ObservationSource, Product, ProductCheck,
     ScraperAccount,
@@ -74,6 +74,37 @@ def catalog_cart_comparison(request):
         "only_in_cart": only_in_cart,
         "only_in_catalog": only_in_catalog,
         "account_snapshots": account_snapshots,
+    })
+
+
+@login_required
+@permission_required("monitor.view_product", raise_exception=True)
+def affiliate_link_generator(request):
+    form = AffiliateLinkGeneratorForm(request.POST or None)
+    rows = []
+    api_error = ""
+    if request.method == "POST" and form.is_valid():
+        asins = form.cleaned_data["asins"]
+        if not creators_api_is_configured():
+            api_error = "Creators API no está configurada en este entorno."
+        else:
+            try:
+                content_by_asin = {}
+                for index in range(0, len(asins), 10):
+                    content_by_asin.update(get_products_content(asins[index:index + 10]))
+                rows = [
+                    {"asin": asin, "content": content_by_asin.get(asin)}
+                    for asin in asins
+                ]
+            except Exception:
+                api_error = (
+                    "No fue posible consultar Creators API en este momento. "
+                    "Inténtalo nuevamente."
+                )
+    return render(request, "monitor/affiliate_link_generator.html", {
+        "form": form,
+        "rows": rows,
+        "api_error": api_error,
     })
 
 

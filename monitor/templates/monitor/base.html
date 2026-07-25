@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&amp;family=Manrope:wght@500;600;700;800&amp;display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="{% static 'monitor/app.css' %}?v=20260723-3">
+  <link rel="stylesheet" href="{% static 'monitor/app.css' %}?v=20260724-2">
   {% block extra_head %}{% endblock %}
 </head>
 <body>
@@ -24,8 +24,17 @@
   </header>
   <main class="container">
     {% for message in messages %}<div class="message {{ message.tags }}">{{ message }}</div>{% endfor %}
+    {% if user.is_authenticated %}
+    <div class="workspace">
+      {% include "monitor/includes/sidebar.html" %}
+      <section class="main-content">
+    {% endif %}
     {% block content %}{% endblock %}
+    {% if user.is_authenticated %}
+      </section>
+    </div>
+    {% endif %}
   </main>
-  <script src="{% static 'monitor/app.js' %}?v=20260723-3"></script>
+  <script src="{% static 'monitor/app.js' %}?v=20260724-1"></script>
 </body>
 </html>

@@ -1,3 +1,5 @@
+import re
+
 from django import forms
 
 from .models import Product
@@ -63,3 +65,34 @@ class ProductBulkUpdateForm(forms.Form):
         if cleaned.get("cooldown_minutes") is None and cleaned.get("max_alerts_per_day") is None:
             raise forms.ValidationError("Indica un cooldown, un límite diario o ambos.")
         return cleaned
+
+
+class AffiliateLinkGeneratorForm(forms.Form):
+    asins = forms.CharField(
+        label="ASIN de Amazon",
+        widget=forms.Textarea(attrs={
+            "rows": 3,
+            "autocomplete": "off",
+            "spellcheck": "false",
+            "placeholder": "Ej. B0G3CY83L5, B0ABC12345",
+            "data-asin-input": "",
+        }),
+        help_text="Introduce hasta 50 ASIN, separados por comas, espacios o saltos de línea.",
+    )
+
+    def clean_asins(self):
+        values = [
+            value.upper()
+            for value in re.split(r"[\s,;]+", self.cleaned_data["asins"].strip())
+            if value
+        ]
+        values = list(dict.fromkeys(values))
+        invalid = [value for value in values if not re.fullmatch(r"[A-Z0-9]{10}", value)]
+        if invalid:
+            raise forms.ValidationError(
+                "Estos ASIN no tienen exactamente 10 letras o números: "
+                + ", ".join(invalid[:5])
+            )
+        if len(values) > 50:
+            raise forms.ValidationError("Puedes consultar hasta 50 ASIN a la vez.")
+        return values

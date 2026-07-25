@@ -1,0 +1,57 @@
+{% extends "monitor/base.html" %}
+{% block title %}Generador de enlaces | Goey SMAR{% endblock %}
+{% block content %}
+<div class="page-heading">
+  <div>
+    <a class="back" href="{% url 'dashboard' %}">← Centro de herramientas</a>
+    <h1>Generador de enlaces</h1>
+    <p>Obtén enlaces de producto con el código de creador configurado en Creators API.</p>
+  </div>
+</div>
+
+<section class="link-generator-card">
+  <div class="link-generator-intro">
+    <span class="tool-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M10 13a5 5 0 0 0 7.5.5l2-2a5 5 0 0 0-7-7l-1.15 1.15"/><path d="M14 11a5 5 0 0 0-7.5-.5l-2 2a5 5 0 0 0 7 7l1.15-1.15"/></svg></span>
+    <div><span class="eyebrow">Creators API</span><h2>Introduce los ASIN</h2><p>No se guardará ningún dato de esta consulta.</p></div>
+  </div>
+  <form method="post" class="asin-generator-form" data-asin-form>
+    {% csrf_token %}
+    <div class="field">
+      <label for="{{ form.asins.id_for_label }}">{{ form.asins.label }}</label>
+      {{ form.asins }}
+      <div class="asin-chips" data-asin-chips aria-live="polite"></div>
+      <small>{{ form.asins.help_text }}</small>
+      {% for error in form.asins.errors %}<span class="field-error">{{ error }}</span>{% endfor %}
+    </div>
+    <button class="primary generator-submit" type="submit">Generar enlaces</button>
+  </form>
+</section>
+
+{% if api_error %}<div class="message error generator-message">{{ api_error }}</div>{% endif %}
+
+{% if rows %}
+<section class="generator-results">
+  <div class="section-head">
+    <div><span class="eyebrow">Resultados</span><h2>Enlaces obtenidos</h2><p>Copia un enlace individual o todos los enlaces disponibles.</p></div>
+    <button class="secondary" type="button" data-copy-all>Copiar todos</button>
+  </div>
+  <div class="generated-link-list" data-link-results>
+    {% for row in rows %}
+      <article class="generated-link-row">
+        <span class="generated-product">
+          {% if row.content and row.content.image_url %}<img src="{{ row.content.image_url }}" alt="" loading="lazy">{% else %}<span class="generated-fallback">AM</span>{% endif %}
+          <span><strong>{% if row.content and row.content.title %}{{ row.content.title }}{% else %}Producto no encontrado{% endif %}</strong><code>{{ row.asin }}</code></span>
+        </span>
+        {% if row.content and row.content.detail_page_url %}
+          <label class="generated-url"><span>Enlace de creador</span><input type="text" readonly value="{{ row.content.detail_page_url }}" data-generated-url></label>
+          <button class="copy-link-button" type="button" data-copy-url data-url="{{ row.content.detail_page_url }}">Copiar</button>
+        {% else %}
+          <span class="generated-missing">Creators API no devolvió un enlace para este ASIN.</span>
+        {% endif %}
+      </article>
+    {% endfor %}
+  </div>
+  <p class="copy-feedback" data-copy-feedback aria-live="polite"></p>
+</section>
+{% endif %}
+{% endblock %}
