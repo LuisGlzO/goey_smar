@@ -9,6 +9,7 @@ from django.utils import timezone
 
 from monitor.amazon_creators import CreatorProductContent
 from monitor.models import Alert, MonitorRun, MonitorSettings, ObservationSource, Product, ProductCheck
+from monitor.performance import MonitorPerformance
 from monitor.services import request_product_alert, run_creators_api_monitor, start_monitor_run
 
 
@@ -116,6 +117,40 @@ class CentralAlertServiceTests(TestCase):
         self.assertEqual(account_a.status, MonitorRun.Status.RUNNING)
         self.assertEqual(account_b.status, MonitorRun.Status.RUNNING)
         self.assertEqual(duplicate_a.status, MonitorRun.Status.SKIPPED)
+
+    @patch("monitor.services.send_product_alert", return_value="105")
+    def test_alert_performance_separates_rule_and_persistence_stages(self, send):
+        timing = MonitorPerformance()
+
+        result = request_product_alert(
+            self.product,
+            self.check(),
+            ObservationSource.SCRAPER,
+            monitor_settings=self.settings,
+            timing=timing,
+        )
+
+        self.assertEqual(result.status, Alert.Status.SENT)
+        names = [entry["name"] for entry in timing.finish()["alerts"]]
+        self.assertIn("alert_reservation", names)
+        self.assertIn("rule_state_load", names)
+        self.assertIn("rule_evaluation", names)
+        self.assertIn("alert_insert", names)
+        self.assertIn("telegram_send", names)
+        self.assertNotIn("alert_decision", names)
+
+    @patch("monitor.services.load_alert_rule_state")
+    def test_fast_precheck_does_not_load_alert_history(self, load_rule_state):
+        result = request_product_alert(
+            self.product,
+            self.check(price=Decimal("1100")),
+            ObservationSource.SCRAPER,
+            monitor_settings=self.settings,
+        )
+
+        self.assertEqual(result.status, Alert.Status.SKIPPED)
+        self.assertEqual(result.reason, "price_above_target")
+        load_rule_state.assert_not_called()
 
 
 class CreatorsMonitorTests(TestCase):

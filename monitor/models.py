@@ -1,4 +1,5 @@
 from django.db import models
+from django.db.models import Q
 
 
 class ObservationSource(models.TextChoices):
@@ -160,7 +161,13 @@ class ProductCheck(models.Model):
 
     class Meta:
         ordering = ("-checked_at",)
-        indexes = [models.Index(fields=("product", "-checked_at"))]
+        indexes = [
+            models.Index(fields=("product", "-checked_at")),
+            models.Index(
+                fields=("product", "source", "-checked_at"),
+                name="check_prod_source_date_idx",
+            ),
+        ]
 
 
 class CartSnapshotItem(models.Model):
@@ -203,5 +210,17 @@ class Alert(models.Model):
 
     class Meta:
         ordering = ("-created_at",)
-        indexes = [models.Index(fields=("product", "-created_at"))]
+        indexes = [
+            models.Index(fields=("product", "-created_at")),
+            models.Index(
+                fields=("product", "-created_at", "-id"),
+                condition=Q(status="sent"),
+                name="alert_sent_prod_date_idx",
+            ),
+            models.Index(
+                fields=("product", "reservation_expires_at"),
+                condition=Q(status="processing"),
+                name="alert_processing_res_idx",
+            ),
+        ]
         permissions = [("send_manual_alert", "Puede enviar alertas manuales")]

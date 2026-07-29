@@ -4,7 +4,7 @@ import signal
 import sys
 import time
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 
 from django.conf import settings as django_settings
@@ -41,6 +41,46 @@ class ObservedItem:
     product_url: str
     raw_text: str
     creator_content: object | None = None
+
+
+@dataclass(frozen=True)
+class SentAlertState:
+    created_at: datetime
+    reason: str
+    source: str
+    price: Decimal | None
+
+
+@dataclass(frozen=True)
+class AlertRuleState:
+    sent_alerts: tuple[SentAlertState, ...]
+
+    @property
+    def last_sent(self):
+        return self.sent_alerts[0] if self.sent_alerts else None
+
+    def has_sent_since(self, cutoff):
+        return any(alert.created_at >= cutoff for alert in self.sent_alerts)
+
+    def sent_count_since(self, cutoff):
+        return sum(alert.created_at >= cutoff for alert in self.sent_alerts)
+
+
+def load_alert_rule_state(product):
+    rows = (
+        Alert.objects.filter(product=product, status=Alert.Status.SENT)
+        .order_by("-created_at", "-pk")
+        .values("created_at", "reason", "source", "product_check__price")
+    )
+    return AlertRuleState(tuple(
+        SentAlertState(
+            created_at=row["created_at"],
+            reason=row["reason"],
+            source=row["source"],
+            price=row["product_check__price"],
+        )
+        for row in rows
+    ))
 
 
 def scrape_saved_items(*args, **kwargs):
@@ -180,53 +220,61 @@ def monitor_pause_reason(settings, now=None):
     return "outside_active_window"
 
 
-def anti_false_restock_cooldown_active(sent_alerts, monitor_settings, now):
+def anti_false_restock_cooldown_active(rule_state, monitor_settings, now):
     cooldown_minutes = monitor_settings.anti_false_restock_cooldown_minutes if monitor_settings else 0
     if cooldown_minutes <= 0:
         return False
-    return sent_alerts.filter(created_at__gte=now - timedelta(minutes=cooldown_minutes)).exists()
+    return rule_state.has_sent_since(now - timedelta(minutes=cooldown_minutes))
 
 
-def effective_cooldown_minutes(product):
+def effective_cooldown_minutes(product, rule_state=None):
     """Return the current cooldown without mutating the product's configured base."""
     effective = product.cooldown_minutes
     maximum = max(product.cooldown_minutes, MAX_STEPPED_COOLDOWN_MINUTES)
-    automatic_reasons = (
-        Alert.objects.filter(product=product, status=Alert.Status.SENT)
-        .exclude(source=ObservationSource.MANUAL)
-        .order_by("-created_at", "-pk")
-        .values_list("reason", flat=True)
-    )
-    for reason in automatic_reasons:
-        if reason == "cooldown_elapsed":
+    if effective == 0 or effective >= maximum:
+        return effective
+    rule_state = rule_state or load_alert_rule_state(product)
+    for alert in rule_state.sent_alerts:
+        if alert.source == ObservationSource.MANUAL:
+            continue
+        if alert.reason == "cooldown_elapsed":
             effective = min(effective * 2, maximum)
+            if effective >= maximum:
+                break
             continue
         # Reset reasons and unknown historical reasons both end the current
         # consecutive cooldown-elapsed streak at the configured base.
-        if reason in COOLDOWN_RESET_REASONS:
+        if alert.reason in COOLDOWN_RESET_REASONS:
             break
         break
     return effective
 
 
-def alert_decision(product, check, now=None, monitor_settings=None):
+def _automatic_alert_precheck(product, check):
+    if not check.move_to_cart_visible:
+        return "move_to_cart_missing"
+    if check.availability != ProductCheck.Availability.AVAILABLE:
+        return "not_available"
+    if check.price is None:
+        return "price_missing"
+    if check.price > product.max_price:
+        return "price_above_target"
+    return ""
+
+
+def alert_decision(product, check, now=None, monitor_settings=None, rule_state=None):
     now = now or timezone.now()
     monitor_settings = monitor_settings or MonitorSettings.load()
-    if not check.move_to_cart_visible:
-        return False, "move_to_cart_missing"
-    if check.availability != ProductCheck.Availability.AVAILABLE:
-        return False, "not_available"
-    if check.price is None:
-        return False, "price_missing"
-    if check.price > product.max_price:
-        return False, "price_above_target"
+    precheck_reason = _automatic_alert_precheck(product, check)
+    if precheck_reason:
+        return False, precheck_reason
 
     start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    sent_alerts = Alert.objects.filter(product=product, status=Alert.Status.SENT)
-    if anti_false_restock_cooldown_active(sent_alerts, monitor_settings, now):
+    rule_state = rule_state or load_alert_rule_state(product)
+    if anti_false_restock_cooldown_active(rule_state, monitor_settings, now):
         return False, "anti_false_restock_cooldown"
 
-    if sent_alerts.filter(created_at__gte=start_of_day).count() >= product.max_alerts_per_day:
+    if rule_state.sent_count_since(start_of_day) >= product.max_alerts_per_day:
         return False, "daily_limit"
 
     previous = None
@@ -236,83 +284,145 @@ def alert_decision(product, check, now=None, monitor_settings=None):
             source=ObservationSource.SCRAPER,
             checked_at__lt=check.checked_at,
         ).first()
-    last_sent = sent_alerts.first()
+    last_sent = rule_state.last_sent
     if not last_sent:
         return True, "first_availability"
     if previous and previous.availability != ProductCheck.Availability.AVAILABLE:
         return True, "restock"
 
-    previous_sent_price = last_sent.product_check.price
+    previous_sent_price = last_sent.price
     if previous_sent_price and check.price < previous_sent_price:
         drop = ((previous_sent_price - check.price) / previous_sent_price) * Decimal("100")
         if drop >= product.significant_price_drop_percent:
             return True, "significant_price_drop"
 
-    if now - last_sent.created_at >= timedelta(minutes=effective_cooldown_minutes(product)):
+    if now - last_sent.created_at >= timedelta(
+        minutes=effective_cooldown_minutes(product, rule_state=rule_state)
+    ):
         return True, "cooldown_elapsed"
     return False, "cooldown"
 
 
-def manual_alert_decision(product, now=None, monitor_settings=None):
+def manual_alert_decision(product, now=None, monitor_settings=None, rule_state=None):
     now = now or timezone.now()
     monitor_settings = monitor_settings or MonitorSettings.load()
     if not product.is_active:
         return False, "product_inactive"
-    sent_alerts = Alert.objects.filter(product=product, status=Alert.Status.SENT)
-    if anti_false_restock_cooldown_active(sent_alerts, monitor_settings, now):
+    rule_state = rule_state or load_alert_rule_state(product)
+    if anti_false_restock_cooldown_active(rule_state, monitor_settings, now):
         return False, "anti_false_restock_cooldown"
     start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    if sent_alerts.filter(created_at__gte=start_of_day).count() >= product.max_alerts_per_day:
+    if rule_state.sent_count_since(start_of_day) >= product.max_alerts_per_day:
         return False, "daily_limit"
-    last_sent = sent_alerts.first()
-    if last_sent and now - last_sent.created_at < timedelta(minutes=effective_cooldown_minutes(product)):
+    last_sent = rule_state.last_sent
+    if last_sent and now - last_sent.created_at < timedelta(
+        minutes=effective_cooldown_minutes(product, rule_state=rule_state)
+    ):
         return False, "cooldown"
     return True, "manual_request"
 
 
-def _reserve_alert(product, check, source, requested_by=None, monitor_settings=None):
+def _reserve_alert(product, check, source, requested_by=None, monitor_settings=None, timing=None):
     now = timezone.now()
     reservation_seconds = getattr(django_settings, "ALERT_RESERVATION_SECONDS", 90)
     with transaction.atomic():
-        product = Product.objects.select_for_update().get(pk=product.pk)
-        Alert.objects.filter(
-            product=product,
-            status=Alert.Status.PROCESSING,
-            reservation_expires_at__lte=now,
-        ).update(status=Alert.Status.FAILED, reason="reservation_expired", details="La reserva de envio expiro.")
-        if Alert.objects.filter(
-            product=product,
-            status=Alert.Status.PROCESSING,
-            reservation_expires_at__gt=now,
-        ).exists():
-            return Alert.objects.create(
-                product=product, product_check=check, source=source, requested_by=requested_by,
-                status=Alert.Status.SKIPPED, reason="alert_in_progress",
+        with (
+            timing.stage("alert_reservation", group="alerts", asin=product.asin)
+            if timing else _nullcontext()
+        ):
+            product = Product.objects.select_for_update().get(pk=product.pk)
+            Alert.objects.filter(
+                product=product,
+                status=Alert.Status.PROCESSING,
+                reservation_expires_at__lte=now,
+            ).update(
+                status=Alert.Status.FAILED,
+                reason="reservation_expired",
+                details="La reserva de envio expiro.",
             )
+            alert_in_progress = Alert.objects.filter(
+                product=product,
+                status=Alert.Status.PROCESSING,
+                reservation_expires_at__gt=now,
+            ).exists()
+        if alert_in_progress:
+            with (
+                timing.stage("alert_insert", group="alerts", asin=product.asin)
+                if timing else _nullcontext()
+            ):
+                return Alert.objects.create(
+                    product=product, product_check=check, source=source, requested_by=requested_by,
+                    status=Alert.Status.SKIPPED, reason="alert_in_progress",
+                )
         if source == ObservationSource.MANUAL:
-            should_send, reason = manual_alert_decision(product, now=now, monitor_settings=monitor_settings)
+            precheck_reason = "" if product.is_active else "product_inactive"
         else:
-            should_send, reason = alert_decision(product, check, now=now, monitor_settings=monitor_settings)
-        if not should_send:
+            precheck_reason = _automatic_alert_precheck(product, check)
+        if precheck_reason:
+            should_send, reason = False, precheck_reason
+        else:
+            with (
+                timing.stage("rule_state_load", group="alerts", asin=product.asin)
+                if timing else _nullcontext()
+            ):
+                rule_state = load_alert_rule_state(product)
+            with (
+                timing.stage("rule_evaluation", group="alerts", asin=product.asin)
+                if timing else _nullcontext()
+            ):
+                if source == ObservationSource.MANUAL:
+                    should_send, reason = manual_alert_decision(
+                        product,
+                        now=now,
+                        monitor_settings=monitor_settings,
+                        rule_state=rule_state,
+                    )
+                else:
+                    should_send, reason = alert_decision(
+                        product,
+                        check,
+                        now=now,
+                        monitor_settings=monitor_settings,
+                        rule_state=rule_state,
+                    )
+        if precheck_reason and timing:
+            with timing.stage("rule_evaluation", group="alerts", asin=product.asin):
+                pass
+        with (
+            timing.stage("alert_insert", group="alerts", asin=product.asin)
+            if timing else _nullcontext()
+        ):
+            if not should_send:
+                return Alert.objects.create(
+                    product=product, product_check=check, source=source, requested_by=requested_by,
+                    status=Alert.Status.SKIPPED, reason=reason,
+                )
             return Alert.objects.create(
                 product=product, product_check=check, source=source, requested_by=requested_by,
-                status=Alert.Status.SKIPPED, reason=reason,
+                status=Alert.Status.PROCESSING, reason=reason,
+                reservation_expires_at=now + timedelta(seconds=reservation_seconds),
             )
-        return Alert.objects.create(
-            product=product, product_check=check, source=source, requested_by=requested_by,
-            status=Alert.Status.PROCESSING, reason=reason,
-            reservation_expires_at=now + timedelta(seconds=reservation_seconds),
-        )
 
 
 def request_product_alert(
     product, check, source, requested_by=None, monitor_settings=None, timing=None, creator_content=None
 ):
-    alert = _reserve_alert(product, check, source, requested_by=requested_by, monitor_settings=monitor_settings)
+    alert = _reserve_alert(
+        product,
+        check,
+        source,
+        requested_by=requested_by,
+        monitor_settings=monitor_settings,
+        timing=timing,
+    )
     if alert.status != Alert.Status.PROCESSING:
         return alert
     try:
-        message_id = send_product_alert(product, check, timing=timing, creator_content=creator_content)
+        with (
+            timing.stage("telegram_send", group="alerts", asin=product.asin)
+            if timing else _nullcontext()
+        ):
+            message_id = send_product_alert(product, check, timing=timing, creator_content=creator_content)
         alert.status = Alert.Status.SENT
         alert.details = message_id
     except Exception as exc:
@@ -320,7 +430,11 @@ def request_product_alert(
         alert.reason = "telegram_error"
         alert.details = str(exc)
     alert.reservation_expires_at = None
-    alert.save(update_fields=("status", "reason", "details", "reservation_expires_at"))
+    with (
+        timing.stage("alert_insert", group="alerts", asin=product.asin)
+        if timing else _nullcontext()
+    ):
+        alert.save(update_fields=("status", "reason", "details", "reservation_expires_at"))
     return alert
 
 
@@ -336,11 +450,10 @@ def process_item(run, product, item, monitor_settings=None, timing=None):
         product_url=item.product_url,
         raw_text=item.raw_text,
     )
-    with timing.stage("alert_decision", group="alerts", asin=product.asin) if timing else _nullcontext():
-        request_product_alert(
-            product, check, run.source, monitor_settings=monitor_settings, timing=timing,
-            creator_content=getattr(item, "creator_content", None),
-        )
+    request_product_alert(
+        product, check, run.source, monitor_settings=monitor_settings, timing=timing,
+        creator_content=getattr(item, "creator_content", None),
+    )
     return check
 
 

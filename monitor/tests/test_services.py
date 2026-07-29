@@ -3,7 +3,9 @@ from decimal import Decimal
 from unittest.mock import ANY, patch
 
 from django.core import mail
+from django.db import connection
 from django.test import TestCase, override_settings
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
 from monitor.email import send_monitor_failure_email
@@ -14,6 +16,7 @@ from monitor.services import (
     consecutive_infrastructure_failures,
     determine_availability,
     effective_cooldown_minutes,
+    load_alert_rule_state,
     process_missing_product,
     recover_stale_monitor_runs,
     request_worker_restart_after_infrastructure_failures,
@@ -220,6 +223,52 @@ class AlertDecisionTests(TestCase):
         self.product.cooldown_minutes = 480
         self.product.save(update_fields=("cooldown_minutes",))
         self.assertEqual(effective_cooldown_minutes(self.product), 480)
+
+    def test_rule_state_loads_only_sent_alerts_in_one_query(self):
+        check = self.make_check()
+        Alert.objects.bulk_create([
+            Alert(
+                product=self.product,
+                product_check=check,
+                status=Alert.Status.SKIPPED,
+                reason="cooldown",
+            )
+            for _ in range(200)
+        ])
+        Alert.objects.create(
+            product=self.product,
+            product_check=check,
+            status=Alert.Status.SENT,
+            reason="first_availability",
+        )
+
+        with CaptureQueriesContext(connection) as queries:
+            rule_state = load_alert_rule_state(self.product)
+
+        self.assertEqual(len(queries), 1)
+        self.assertEqual(len(rule_state.sent_alerts), 1)
+        self.assertEqual(rule_state.last_sent.reason, "first_availability")
+
+    @patch("monitor.services.load_alert_rule_state")
+    def test_alert_decision_reuses_preloaded_rule_state(self, load_rule_state):
+        previous_check = self.make_check()
+        Alert.objects.create(
+            product=self.product,
+            product_check=previous_check,
+            status=Alert.Status.SENT,
+            reason="first_availability",
+        )
+        rule_state = load_alert_rule_state(self.product)
+
+        should_send, reason = alert_decision(
+            self.product,
+            self.make_check(),
+            rule_state=rule_state,
+        )
+
+        self.assertFalse(should_send)
+        self.assertEqual(reason, "cooldown")
+        load_rule_state.assert_not_called()
 
     def test_anti_false_restock_cooldown_blocks_recent_same_product_alert(self):
         monitor_settings = MonitorSettings(anti_false_restock_cooldown_minutes=5)
