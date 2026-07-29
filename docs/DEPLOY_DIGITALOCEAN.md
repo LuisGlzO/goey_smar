@@ -87,12 +87,21 @@ DJANGO_CSRF_TRUSTED_ORIGINS=https://goeysmar.tensoria.com.mx
 DJANGO_SESSION_COOKIE_SECURE=true
 DJANGO_CSRF_COOKIE_SECURE=true
 POSTGRES_PASSWORD=valor-largo-y-secreto
-MONITOR_INTERVAL_SECONDS=60
-MONITOR_TASK_EXPIRES_SECONDS=60
+MONITOR_INTERVAL_SECONDS=40
 MONITOR_TASK_TIME_LIMIT_SECONDS=240
 MONITOR_FAILURE_ALERT_COOLDOWN_MINUTES=60
 MONITOR_INFRASTRUCTURE_FAILURE_RESTART_THRESHOLD=3
 MONITOR_AUTO_RESTART_WORKER_ON_INFRA_FAILURE=true
+MONITOR_RETENTION_DAYS=30
+MONITOR_RETENTION_BATCH_SIZE=1000
+AMAZON_SCRAPER_A_INTERVAL_SECONDS=40
+AMAZON_SCRAPER_A_COUNTDOWN_SECONDS=0
+AMAZON_SCRAPER_B_INTERVAL_SECONDS=40
+AMAZON_SCRAPER_B_COUNTDOWN_SECONDS=5
+AMAZON_CREATORS_API_INTERVAL_SECONDS=40
+AMAZON_CREATORS_API_COUNTDOWN_SECONDS=10
+AMAZON_CREATORS_API_TASK_TIME_LIMIT_SECONDS=240
+MANUAL_ALERT_USE_STORED_CONTENT=false
 TELEGRAM_BOT_TOKEN=...
 TELEGRAM_CHAT_ID=...
 TELEGRAM_ERROR_BOT_TOKEN=...
@@ -116,8 +125,8 @@ docker compose -f docker-compose.prod.yml up -d --build
 
 Este único comando levanta Beat, `worker_scraper_amazon_a`,
 `worker_scraper_amazon_b` y `worker_creators`. Cada uno consume exclusivamente su
-cola. Los scrapers usan el mismo intervalo y `amazon_b` inicia medio intervalo
-después de `amazon_a`.
+cola. Con la configuración recomendada, A, B y Creators API se publican cada 40
+segundos con fases de 0, 5 y 10 segundos.
 
 Al actualizar una instalación que todavía tenga el antiguo servicio único
 `worker`, use una sola vez `--remove-orphans` para retirar ese contenedor:

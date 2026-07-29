@@ -211,9 +211,9 @@ las colas `scraper_amazon_a` y `scraper_amazon_b`, y la API a `creators_api`, po
 ejecutarse al mismo tiempo y solicitar alertas al servicio central compartido.
 Si el scraper pierde la sesión de Amazon, Creators API puede continuar trabajando
 si su worker, Beat, Redis y PostgreSQL permanecen activos.
-Las tareas publicadas por Beat expiran segun `MONITOR_TASK_EXPIRES_SECONDS`, por
-lo que si una corrida tarda demasiado no se acumulan revisiones viejas para
-ejecutarse inmediatamente despues.
+Cada tarea publicada por Beat expira despues de su intervalo mas su fase
+(`countdown`), por lo que una corrida atrasada no se acumula para ejecutarse
+inmediatamente despues.
 Ademas, `MONITOR_TASK_TIME_LIMIT_SECONDS` define el limite duro de vida de una
 tarea del worker.
 
@@ -331,15 +331,22 @@ escalonamiento.
 
 ## 9. Monitores y alertas manuales
 
-El sistema ejecuta dos motores independientes: Playwright y Creators API. Ambos
+El sistema ejecuta tres monitores independientes: dos cuentas Playwright y
+Creators API. Los tres
 registran verificaciones y solicitan el envío al mismo servicio central, por lo
 que comparten cooldown anti-falso-restock, cooldown por producto y límite diario.
 Solo el scraper puede confirmar una reposición a partir de sus propias
 verificaciones anteriores. Creators API nunca genera el motivo `restock`; una
 disponibilidad de esta fuente continúa por las reglas de primera disponibilidad,
 caída significativa de precio o cooldown terminado.
-Configure la tarea API con `AMAZON_CREATORS_API_INTERVAL_SECONDS`,
-`AMAZON_CREATORS_API_BATCH_SIZE` y `AMAZON_CREATORS_API_BATCH_DELAY_SECONDS`.
+Los tres monitores se ejecutan en workers independientes. Configure intervalos
+y fases con `AMAZON_SCRAPER_A_INTERVAL_SECONDS`,
+`AMAZON_SCRAPER_A_COUNTDOWN_SECONDS`,
+`AMAZON_SCRAPER_B_INTERVAL_SECONDS`,
+`AMAZON_SCRAPER_B_COUNTDOWN_SECONDS`,
+`AMAZON_CREATORS_API_INTERVAL_SECONDS` y
+`AMAZON_CREATORS_API_COUNTDOWN_SECONDS`. En produccion se recomiendan 40
+segundos y fases 0, 5 y 10 respectivamente.
 
 El panel web está disponible en `/` para usuarios de Django autenticados. Asigne
 el permiso `monitor.send_manual_alert` al usuario o grupo que podrá abrir
@@ -353,13 +360,38 @@ Django Admin. Asigne al grupo del cliente los permisos estándar
 `monitor.view_product`, `monitor.add_product` y `monitor.change_product`. El
 último habilita también la actualización masiva de cooldown y límite diario.
 
-La fotografía se guarda como una URL devuelta por Creators API y se refresca
-durante el monitor automático. No se almacenan archivos en el servidor, por lo
-que no se requiere `MEDIA_ROOT`, un volumen Docker adicional ni DigitalOcean
-Spaces. Después del despliegue, los productos existentes obtendrán su imagen en
-la siguiente ejecución exitosa del monitor API.
+La fotografía se guarda como una URL devuelta por Creators API al crear el
+producto, cambiar su ASIN o completar una alerta manual que todavía no tenga
+imagen. El monitor automático no modifica el catálogo. No se almacenan archivos
+en el servidor, por lo que no se requiere `MEDIA_ROOT`, un volumen Docker
+adicional ni DigitalOcean Spaces.
 
-## 11. Incidentes
+## 11. Retencion y contenido local
+
+El monitor periodico de Creators API detecta candidatos, pero no actualiza la
+imagen del catalogo. Con `MANUAL_ALERT_USE_STORED_CONTENT=true`, las alertas
+manuales usan el nombre e imagen guardados. `observations` contiene notas
+internas y nunca se publica en Telegram.
+
+Revise la limpieza antes de ejecutarla:
+
+```bash
+docker compose -f docker-compose.prod.yml exec -T web \
+  python manage.py cleanup_monitor_history --dry-run
+```
+
+Para una ejecucion diaria a las 03:30 agregue al crontab del host:
+
+```cron
+CRON_TZ=America/Mexico_City
+30 3 * * * cd /root/goey_smar && flock -n /tmp/goey-history-cleanup.lock docker compose -f docker-compose.prod.yml exec -T web nice -n 10 python manage.py cleanup_monitor_history >> /var/log/goey-history-cleanup.log 2>&1
+```
+
+La limpieza conserva alertas `SENT` y `FAILED`. Configure
+`MONITOR_RETENTION_DAYS=30` y `MONITOR_RETENTION_BATCH_SIZE=1000`. Revise su
+salida con `tail -n 50 /var/log/goey-history-cleanup.log`.
+
+## 12. Incidentes
 
 Las alertas técnicas incluyen `scraper:amazon_a` o `scraper:amazon_b`. El cooldown
 de fallos se calcula por cuenta: el primer fallo se informa inmediatamente y un

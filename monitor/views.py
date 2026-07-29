@@ -15,7 +15,7 @@ from .models import (
     Alert, MonitorRun, MonitorSettings, ObservationSource, Product, ProductCheck,
     ScraperAccount,
 )
-from .services import effective_cooldown_minutes, request_product_alert
+from .services import effective_cooldown_minutes, load_alert_rule_states, request_product_alert
 
 
 REASON_MESSAGES = {
@@ -126,7 +126,9 @@ def products(request):
     account = request.GET.get("account", "all")
     queryset = Product.objects.select_related("scraper_account")
     if query:
-        queryset = queryset.filter(Q(asin__icontains=query) | Q(name__icontains=query))
+        queryset = queryset.filter(
+            Q(asin__icontains=query) | Q(name__icontains=query) | Q(observations__icontains=query)
+        )
     if status == "active":
         queryset = queryset.filter(is_active=True)
     elif status == "inactive":
@@ -198,14 +200,16 @@ def products_bulk_update(request):
     return redirect("products")
 
 
-def _cooldown_state(product, monitor_settings, now):
-    last_sent = product.alerts.filter(status=Alert.Status.SENT).first()
+def _cooldown_state(product, monitor_settings, now, rule_state):
+    last_sent = rule_state.last_sent
     if not last_sent:
         return {"label": "Disponible", "blocked": False, "remaining_minutes": 0}
     anti_until = last_sent.created_at + timedelta(
         minutes=monitor_settings.anti_false_restock_cooldown_minutes
     )
-    normal_until = last_sent.created_at + timedelta(minutes=effective_cooldown_minutes(product))
+    normal_until = last_sent.created_at + timedelta(
+        minutes=effective_cooldown_minutes(product, rule_state=rule_state)
+    )
     blocked_until = max(anti_until, normal_until)
     if blocked_until <= now:
         return {"label": "Disponible", "blocked": False, "remaining_minutes": 0}
@@ -220,10 +224,20 @@ def manual_alerts(request):
     query = request.GET.get("q", "").strip()
     products = Product.objects.filter(is_active=True)
     if query:
-        products = products.filter(Q(asin__icontains=query) | Q(name__icontains=query))
+        products = products.filter(
+            Q(asin__icontains=query) | Q(name__icontains=query) | Q(observations__icontains=query)
+        )
+    products = list(products)
     settings = MonitorSettings.load()
     now = timezone.now()
-    rows = [{"product": product, "cooldown": _cooldown_state(product, settings, now)} for product in products]
+    rule_states = load_alert_rule_states(products)
+    rows = [
+        {
+            "product": product,
+            "cooldown": _cooldown_state(product, settings, now, rule_states[product.pk]),
+        }
+        for product in products
+    ]
     return render(request, "monitor/manual_alerts.html", {"rows": rows, "query": query})
 
 

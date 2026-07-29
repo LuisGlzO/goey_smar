@@ -24,7 +24,8 @@ class ProductManagementTests(TestCase):
 
     def payload(self, **overrides):
         values = {
-            "asin": "B0NEW12345", "name": "Producto nuevo", "affiliate_url": "",
+            "asin": "B0NEW12345", "name": "Producto nuevo", "observations": "",
+            "affiliate_url": "",
             "scraper_account": "amazon_a",
             "max_price": "900.00", "priority": "20", "is_active": "on",
             "cooldown_minutes": "60", "max_alerts_per_day": "3",
@@ -65,8 +66,23 @@ class ProductManagementTests(TestCase):
         self.assertRedirects(response, reverse("products"))
         product = Product.objects.get(asin="B0NEW12345")
         self.assertEqual(product.name, "Producto nuevo")
+        self.assertEqual(product.observations, "")
         self.assertEqual(product.image_url, "https://m.media-amazon.com/photo.jpg")
         self.assertIsNotNone(product.image_refreshed_at)
+
+    @patch("monitor.views.safe_get_product_content", return_value=None)
+    def test_observations_are_saved_and_searchable(self, get_content):
+        self.grant("view_product", "add_product")
+        response = self.client.post(
+            reverse("product_create"),
+            self.payload(observations="Prioridad del cliente, no publicar esta nota"),
+        )
+        self.assertRedirects(response, reverse("products"))
+        product = Product.objects.get(asin="B0NEW12345")
+        self.assertEqual(product.observations, "Prioridad del cliente, no publicar esta nota")
+
+        response = self.client.get(reverse("products"), {"q": "Prioridad del cliente"})
+        self.assertContains(response, "Producto nuevo")
 
     def test_create_requires_scraper_account(self):
         self.grant("view_product", "add_product")

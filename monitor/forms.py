@@ -9,12 +9,14 @@ class ProductForm(forms.ModelForm):
     class Meta:
         model = Product
         fields = (
-            "asin", "name", "scraper_account", "affiliate_url", "max_price", "priority", "is_active",
-            "cooldown_minutes", "max_alerts_per_day", "significant_price_drop_percent",
+            "asin", "name", "observations", "scraper_account", "affiliate_url", "max_price",
+            "priority", "is_active", "cooldown_minutes", "max_alerts_per_day",
+            "significant_price_drop_percent",
         )
         labels = {
             "asin": "ASIN",
             "name": "Nombre",
+            "observations": "Observaciones internas",
             "scraper_account": "Cuenta de Amazon",
             "affiliate_url": "URL de afiliado",
             "max_price": "Precio máximo",
@@ -26,11 +28,14 @@ class ProductForm(forms.ModelForm):
         }
         help_texts = {
             "asin": "Código ASIN de 10 caracteres.",
+            "name": "Nombre público exacto que se mostrará en la alerta de Telegram.",
+            "observations": "Anotaciones internas. Nunca se incluyen en las alertas.",
             "affiliate_url": "Opcional. Tiene prioridad sobre el enlace generado automáticamente.",
         }
         widgets = {
             "asin": forms.TextInput(attrs={"maxlength": 10, "autocomplete": "off"}),
             "name": forms.TextInput(),
+            "observations": forms.Textarea(attrs={"rows": 3}),
             "affiliate_url": forms.URLInput(),
             "max_price": forms.NumberInput(attrs={"min": 0, "step": "0.01"}),
             "cooldown_minutes": forms.NumberInput(attrs={"min": 0}),

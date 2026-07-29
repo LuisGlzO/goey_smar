@@ -6,7 +6,7 @@ import requests
 from django.conf import settings
 from django.utils import timezone
 
-from .amazon_creators import safe_get_product_content
+from .amazon_creators import CreatorProductContent, safe_get_product_content
 from .links import affiliate_url_for
 
 
@@ -65,7 +65,35 @@ def send_telegram_photo(chat_id: str, photo_url: str, caption: str, bot_token: s
 def send_product_alert(product, check, timing=None, creator_content=None) -> str:
     if not settings.TELEGRAM_CHAT_ID:
         raise RuntimeError("TELEGRAM_CHAT_ID es obligatorio.")
-    if creator_content is None:
+    use_stored_manual_content = (
+        check.source == "manual" and settings.MANUAL_ALERT_USE_STORED_CONTENT
+    )
+    if creator_content is None and use_stored_manual_content:
+        image_url = product.image_url
+        detail_page_url = ""
+        if not image_url:
+            started = perf_counter()
+            remote_content = safe_get_product_content(product.asin)
+            _record_alert_timing(
+                timing,
+                product,
+                "creators_api_manual_fallback",
+                perf_counter() - started,
+                found=bool(remote_content),
+            )
+            if remote_content:
+                image_url = remote_content.image_url
+                detail_page_url = remote_content.detail_page_url
+                if image_url:
+                    product.image_url = image_url
+                    product.image_refreshed_at = timezone.now()
+                    product.save(update_fields=("image_url", "image_refreshed_at", "updated_at"))
+        creator_content = CreatorProductContent(
+            title=product.name,
+            image_url=image_url,
+            detail_page_url=detail_page_url,
+        )
+    elif creator_content is None:
         started = perf_counter()
         creator_content = safe_get_product_content(product.asin)
         _record_alert_timing(

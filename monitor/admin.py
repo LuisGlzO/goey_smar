@@ -27,7 +27,7 @@ class ProductAdmin(admin.ModelAdmin):
     list_display = ("asin", "name", "scraper_account", "max_price", "priority", "is_active", "cooldown_minutes", "max_alerts_per_day", "image_refreshed_at")
     readonly_fields = ("image_url", "image_refreshed_at")
     list_filter = ("scraper_account", "is_active", "priority")
-    search_fields = ("asin", "name")
+    search_fields = ("asin", "name", "observations")
 
 
 @admin.register(ProductCheck)

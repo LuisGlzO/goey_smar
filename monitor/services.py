@@ -66,21 +66,31 @@ class AlertRuleState:
         return sum(alert.created_at >= cutoff for alert in self.sent_alerts)
 
 
-def load_alert_rule_state(product):
+def load_alert_rule_states(products):
+    product_ids = [product.pk for product in products]
+    states = {product_id: [] for product_id in product_ids}
+    if not product_ids:
+        return {}
     rows = (
-        Alert.objects.filter(product=product, status=Alert.Status.SENT)
-        .order_by("-created_at", "-pk")
-        .values("created_at", "reason", "source", "product_check__price")
+        Alert.objects.filter(product_id__in=product_ids, status=Alert.Status.SENT)
+        .order_by("product_id", "-created_at", "-pk")
+        .values("product_id", "created_at", "reason", "source", "product_check__price")
     )
-    return AlertRuleState(tuple(
-        SentAlertState(
+    for row in rows:
+        states[row["product_id"]].append(SentAlertState(
             created_at=row["created_at"],
             reason=row["reason"],
             source=row["source"],
             price=row["product_check__price"],
-        )
-        for row in rows
-    ))
+        ))
+    return {
+        product_id: AlertRuleState(tuple(sent_alerts))
+        for product_id, sent_alerts in states.items()
+    }
+
+
+def load_alert_rule_state(product):
+    return load_alert_rule_states([product])[product.pk]
 
 
 def scrape_saved_items(*args, **kwargs):
@@ -439,17 +449,21 @@ def request_product_alert(
 
 
 def process_item(run, product, item, monitor_settings=None, timing=None):
-    check = ProductCheck.objects.create(
-        run=run,
-        product=product,
-        source=run.source,
-        availability=determine_availability(item),
-        price=item.price,
-        move_to_cart_visible=item.move_to_cart_visible,
-        unavailable_message_visible=item.unavailable_message_visible,
-        product_url=item.product_url,
-        raw_text=item.raw_text,
-    )
+    with (
+        timing.stage("product_check_insert", group="alerts", asin=product.asin)
+        if timing else _nullcontext()
+    ):
+        check = ProductCheck.objects.create(
+            run=run,
+            product=product,
+            source=run.source,
+            availability=determine_availability(item),
+            price=item.price,
+            move_to_cart_visible=item.move_to_cart_visible,
+            unavailable_message_visible=item.unavailable_message_visible,
+            product_url=item.product_url,
+            raw_text=item.raw_text,
+        )
     request_product_alert(
         product, check, run.source, monitor_settings=monitor_settings, timing=timing,
         creator_content=getattr(item, "creator_content", None),
@@ -619,10 +633,6 @@ def run_creators_api_monitor():
                         status=Alert.Status.SKIPPED, reason="api_data_missing",
                     )
                     continue
-                Product.objects.filter(pk=product.pk).update(
-                    image_url=content.image_url,
-                    image_refreshed_at=timezone.now(),
-                )
                 item = ObservedItem(
                     asin=product.asin,
                     price=content.price,

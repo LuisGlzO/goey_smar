@@ -3,7 +3,9 @@ from decimal import Decimal
 from unittest.mock import patch
 
 from django.contrib.auth.models import Permission, User
+from django.db import connection
 from django.test import TestCase, override_settings
+from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from django.utils import timezone
 
@@ -173,9 +175,13 @@ class CreatorsMonitorTests(TestCase):
         self.assertEqual(check.availability, ProductCheck.Availability.AVAILABLE)
         self.assertEqual(check.alerts.get().status, Alert.Status.SENT)
         product.refresh_from_db()
-        self.assertEqual(product.image_url, "https://m.media-amazon.com/product.jpg")
-        self.assertIsNotNone(product.image_refreshed_at)
+        self.assertEqual(product.image_url, "")
+        self.assertIsNone(product.image_refreshed_at)
         send.assert_called_once()
+        self.assertEqual(
+            send.call_args.kwargs["creator_content"].image_url,
+            "https://m.media-amazon.com/product.jpg",
+        )
 
 
 class ManualAlertPanelTests(TestCase):
@@ -210,6 +216,35 @@ class ManualAlertPanelTests(TestCase):
         response = self.client.get(reverse("manual_alerts"))
 
         self.assertContains(response, "Cooldown: 30 min")
+
+    def test_panel_loads_all_alert_states_with_one_query(self):
+        for index in range(20):
+            Product.objects.create(
+                asin=f"M{index:09d}",
+                name=f"Manual {index}",
+                max_price=Decimal("1000"),
+            )
+        self.client.login(username="cliente", password="secret")
+
+        with CaptureQueriesContext(connection) as queries:
+            response = self.client.get(reverse("manual_alerts"))
+
+        self.assertEqual(response.status_code, 200)
+        alert_queries = [
+            query["sql"] for query in queries
+            if 'FROM "monitor_alert"' in query["sql"]
+        ]
+        self.assertEqual(len(alert_queries), 1)
+
+    def test_panel_searches_and_displays_internal_observations(self):
+        self.active.observations = "Dato interno especial"
+        self.active.save(update_fields=("observations",))
+        self.client.login(username="cliente", password="secret")
+
+        response = self.client.get(reverse("manual_alerts"), {"q": "interno especial"})
+
+        self.assertContains(response, "Activo")
+        self.assertContains(response, "Dato interno especial")
 
     @patch("monitor.services.send_product_alert", return_value="301")
     def test_manual_post_sends_and_audits_user(self, send):

@@ -111,6 +111,7 @@
       alertDialog.querySelector('[data-modal-name]').textContent=card.dataset.name;
       alertDialog.querySelector('[data-modal-asin]').textContent=card.dataset.asin;
       alertDialog.querySelector('[data-modal-status]').textContent=card.dataset.status;
+      alertDialog.querySelector('[data-modal-observations]').textContent=card.dataset.observations||'';
       alertDialog.querySelector('form').action=card.dataset.action;
       alertDialog.showModal();
     }));

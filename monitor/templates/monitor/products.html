@@ -14,7 +14,7 @@
   {% for product in page %}
   <div class="product-list-row" role="row">
     <span>{% if perms.monitor.change_product %}<input type="checkbox" aria-label="Seleccionar {{ product.name }}" data-product-select value="{{ product.pk }}">{% endif %}</span>
-    <span class="product-identity"><span class="catalog-image"><span>{{ product.name|slice:":2"|upper }}</span>{% if product.image_url %}<img src="{{ product.image_url }}" alt="" loading="lazy" onerror="this.remove()">{% endif %}</span><span><strong>{{ product.name }}</strong><code>{{ product.asin }}</code></span></span>
+    <span class="product-identity"><span class="catalog-image"><span>{{ product.name|slice:":2"|upper }}</span>{% if product.image_url %}<img src="{{ product.image_url }}" alt="" loading="lazy" onerror="this.remove()">{% endif %}</span><span><strong>{{ product.name }}</strong><code>{{ product.asin }}</code>{% if product.observations %}<small>{{ product.observations|truncatechars:90 }}</small>{% endif %}</span></span>
     <span><span class="status {% if product.is_active %}ready{% else %}neutral{% endif %}">{% if product.is_active %}Activo{% else %}Inactivo{% endif %}</span><small>{{ product.scraper_account.name }}</small><small>Prioridad {{ product.get_priority_display|lower }}</small></span>
     <span><strong>${{ product.max_price }}</strong></span>
     <span><small>Cooldown</small><strong>{{ product.cooldown_minutes }} min</strong><small>Límite diario</small><strong>{{ product.max_alerts_per_day }}</strong></span>

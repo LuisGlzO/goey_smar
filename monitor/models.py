@@ -45,6 +45,7 @@ class Product(models.Model):
         ScraperAccount, on_delete=models.PROTECT, related_name="products", default="amazon_a"
     )
     name = models.CharField(max_length=250)
+    observations = models.TextField(blank=True)
     affiliate_url = models.URLField(
         max_length=1000,
         blank=True,

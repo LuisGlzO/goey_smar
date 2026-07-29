@@ -6,7 +6,7 @@ from django.core.management import call_command
 from django.test import TestCase, override_settings
 
 from monitor.amazon_creators import CreatorProductContent
-from monitor.models import MonitorRun, Product, ProductCheck
+from monitor.models import MonitorRun, ObservationSource, Product, ProductCheck
 from monitor.telegram import send_monitor_test_alert, send_product_alert
 
 
@@ -99,6 +99,80 @@ class ProductTelegramAlertTests(TestCase):
             "https://www.amazon.com.mx/dp/B0G3CY83L5?tag=goeygeeks2023-20&amp;linkCode=ogi&amp;th=1&amp;psc=1",
             payload["text"],
         )
+
+    @override_settings(
+        TELEGRAM_BOT_TOKEN="product-token",
+        TELEGRAM_CHAT_ID="-100123",
+        AMAZON_ASSOCIATE_TAG="goeygeeks2023-20",
+        MANUAL_ALERT_USE_STORED_CONTENT=True,
+    )
+    @patch("monitor.telegram.safe_get_product_content")
+    @patch("monitor.telegram.requests.get")
+    @patch("monitor.telegram.requests.post")
+    def test_manual_alert_uses_stored_name_and_image(self, post, get, safe_get_product_content):
+        self.product.image_url = "https://images.example/local.jpg"
+        self.product.observations = "Nunca enviar esta anotacion"
+        self.product.save(update_fields=("image_url", "observations"))
+        self.check.source = ObservationSource.MANUAL
+        self.check.save(update_fields=("source",))
+        get.return_value.raw = Mock()
+        post.return_value.json.return_value = {"result": {"message_id": 91}}
+
+        send_product_alert(self.product, self.check)
+
+        safe_get_product_content.assert_not_called()
+        payload = post.call_args.kwargs["data"]
+        self.assertIn("Nombre local", payload["caption"])
+        self.assertNotIn("Nunca enviar esta anotacion", payload["caption"])
+        get.assert_called_once_with("https://images.example/local.jpg", stream=True, timeout=30)
+
+    @override_settings(
+        TELEGRAM_BOT_TOKEN="product-token",
+        TELEGRAM_CHAT_ID="-100123",
+        AMAZON_ASSOCIATE_TAG="goeygeeks2023-20",
+        MANUAL_ALERT_USE_STORED_CONTENT=True,
+    )
+    @patch("monitor.telegram.safe_get_product_content")
+    @patch("monitor.telegram.requests.get")
+    @patch("monitor.telegram.requests.post")
+    def test_manual_alert_saves_api_image_but_keeps_local_name(
+        self, post, get, safe_get_product_content
+    ):
+        self.check.source = ObservationSource.MANUAL
+        self.check.save(update_fields=("source",))
+        safe_get_product_content.return_value = CreatorProductContent(
+            title="Nombre remoto",
+            image_url="https://images.example/fallback.jpg",
+            detail_page_url="https://amazon.example/item",
+        )
+        get.return_value.raw = Mock()
+        post.return_value.json.return_value = {"result": {"message_id": 92}}
+
+        send_product_alert(self.product, self.check)
+
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.image_url, "https://images.example/fallback.jpg")
+        payload = post.call_args.kwargs["data"]
+        self.assertIn("Nombre local", payload["caption"])
+        self.assertNotIn("Nombre remoto", payload["caption"])
+
+    @override_settings(
+        TELEGRAM_BOT_TOKEN="product-token",
+        TELEGRAM_CHAT_ID="-100123",
+        AMAZON_ASSOCIATE_TAG="goeygeeks2023-20",
+        MANUAL_ALERT_USE_STORED_CONTENT=True,
+    )
+    @patch("monitor.telegram.safe_get_product_content", return_value=None)
+    @patch("monitor.telegram.requests.post")
+    def test_manual_alert_uses_text_when_fallback_has_no_image(self, post, safe_get_product_content):
+        self.check.source = ObservationSource.MANUAL
+        self.check.save(update_fields=("source",))
+        post.return_value.json.return_value = {"result": {"message_id": 93}}
+
+        send_product_alert(self.product, self.check)
+
+        self.assertIn("/sendMessage", post.call_args.args[0])
+        self.assertIn("Nombre local", post.call_args.kwargs["json"]["text"])
 
 
 class MonitorTestTelegramAlertTests(TestCase):

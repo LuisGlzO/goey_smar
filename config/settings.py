@@ -1,4 +1,5 @@
 import os
+from math import gcd
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -98,7 +99,6 @@ CELERY_TASK_ROUTES = {
     "monitor.tasks.monitor_creators_api": {"queue": "creators_api"},
 }
 MONITOR_INTERVAL_SECONDS = int(os.getenv("MONITOR_INTERVAL_SECONDS", "120"))
-MONITOR_TASK_EXPIRES_SECONDS = int(os.getenv("MONITOR_TASK_EXPIRES_SECONDS", str(MONITOR_INTERVAL_SECONDS)))
 MONITOR_TASK_TIME_LIMIT_SECONDS = int(os.getenv("MONITOR_TASK_TIME_LIMIT_SECONDS", "240"))
 MONITOR_RUNNING_STALE_MINUTES = int(os.getenv("MONITOR_RUNNING_STALE_MINUTES", "10"))
 MONITOR_FAILURE_ALERT_COOLDOWN_MINUTES = int(os.getenv("MONITOR_FAILURE_ALERT_COOLDOWN_MINUTES", "60"))
@@ -108,29 +108,89 @@ if MONITOR_RUNNING_STALE_MINUTES * 60 <= MONITOR_TASK_TIME_LIMIT_SECONDS:
     raise ImproperlyConfigured(
         "MONITOR_RUNNING_STALE_MINUTES debe superar MONITOR_TASK_TIME_LIMIT_SECONDS."
     )
+
+AMAZON_SCRAPER_A_INTERVAL_SECONDS = int(
+    os.getenv("AMAZON_SCRAPER_A_INTERVAL_SECONDS", str(MONITOR_INTERVAL_SECONDS))
+)
+AMAZON_SCRAPER_A_COUNTDOWN_SECONDS = int(os.getenv("AMAZON_SCRAPER_A_COUNTDOWN_SECONDS", "0"))
+AMAZON_SCRAPER_B_INTERVAL_SECONDS = int(
+    os.getenv("AMAZON_SCRAPER_B_INTERVAL_SECONDS", str(MONITOR_INTERVAL_SECONDS))
+)
+AMAZON_SCRAPER_B_COUNTDOWN_SECONDS = int(os.getenv("AMAZON_SCRAPER_B_COUNTDOWN_SECONDS", "5"))
+AMAZON_CREATORS_API_INTERVAL_SECONDS = int(
+    os.getenv("AMAZON_CREATORS_API_INTERVAL_SECONDS", str(MONITOR_INTERVAL_SECONDS))
+)
+AMAZON_CREATORS_API_COUNTDOWN_SECONDS = int(os.getenv("AMAZON_CREATORS_API_COUNTDOWN_SECONDS", "10"))
+
+
+def _validate_periodic_task_timing(name, interval, countdown):
+    if interval <= 0:
+        raise ImproperlyConfigured(f"{name}_INTERVAL_SECONDS debe ser mayor que cero.")
+    if countdown < 0:
+        raise ImproperlyConfigured(f"{name}_COUNTDOWN_SECONDS no puede ser negativo.")
+    if countdown >= interval:
+        raise ImproperlyConfigured(
+            f"{name}_COUNTDOWN_SECONDS debe ser menor que {name}_INTERVAL_SECONDS."
+        )
+
+
+_validate_periodic_task_timing(
+    "AMAZON_SCRAPER_A", AMAZON_SCRAPER_A_INTERVAL_SECONDS, AMAZON_SCRAPER_A_COUNTDOWN_SECONDS
+)
+_validate_periodic_task_timing(
+    "AMAZON_SCRAPER_B", AMAZON_SCRAPER_B_INTERVAL_SECONDS, AMAZON_SCRAPER_B_COUNTDOWN_SECONDS
+)
+_validate_periodic_task_timing(
+    "AMAZON_CREATORS_API",
+    AMAZON_CREATORS_API_INTERVAL_SECONDS,
+    AMAZON_CREATORS_API_COUNTDOWN_SECONDS,
+)
+
+
+def _validate_distinct_periodic_phases(task_timings):
+    for index, (left_name, left_interval, left_countdown) in enumerate(task_timings):
+        for right_name, right_interval, right_countdown in task_timings[index + 1:]:
+            if (right_countdown - left_countdown) % gcd(left_interval, right_interval) == 0:
+                raise ImproperlyConfigured(
+                    f"{left_name} y {right_name} eventualmente iniciarian al mismo tiempo. "
+                    "Configure fases que no colisionen."
+                )
+
+
+_validate_distinct_periodic_phases((
+    ("AMAZON_SCRAPER_A", AMAZON_SCRAPER_A_INTERVAL_SECONDS, AMAZON_SCRAPER_A_COUNTDOWN_SECONDS),
+    ("AMAZON_SCRAPER_B", AMAZON_SCRAPER_B_INTERVAL_SECONDS, AMAZON_SCRAPER_B_COUNTDOWN_SECONDS),
+    ("AMAZON_CREATORS_API", AMAZON_CREATORS_API_INTERVAL_SECONDS, AMAZON_CREATORS_API_COUNTDOWN_SECONDS),
+))
+
 CELERY_BEAT_SCHEDULE = {
     "monitor-saved-items-amazon-a": {
         "task": "monitor.tasks.monitor_saved_items",
-        "schedule": MONITOR_INTERVAL_SECONDS,
+        "schedule": AMAZON_SCRAPER_A_INTERVAL_SECONDS,
         "args": ("amazon_a",),
-        "options": {"queue": "scraper_amazon_a", "expires": MONITOR_TASK_EXPIRES_SECONDS},
+        "options": {
+            "queue": "scraper_amazon_a",
+            "countdown": AMAZON_SCRAPER_A_COUNTDOWN_SECONDS,
+            "expires": AMAZON_SCRAPER_A_INTERVAL_SECONDS + AMAZON_SCRAPER_A_COUNTDOWN_SECONDS,
+        },
     },
     "monitor-saved-items-amazon-b": {
         "task": "monitor.tasks.monitor_saved_items",
-        "schedule": MONITOR_INTERVAL_SECONDS,
+        "schedule": AMAZON_SCRAPER_B_INTERVAL_SECONDS,
         "args": ("amazon_b",),
         "options": {
             "queue": "scraper_amazon_b",
-            "countdown": max(MONITOR_INTERVAL_SECONDS // 2, 1),
-            "expires": MONITOR_TASK_EXPIRES_SECONDS + max(MONITOR_INTERVAL_SECONDS // 2, 1),
+            "countdown": AMAZON_SCRAPER_B_COUNTDOWN_SECONDS,
+            "expires": AMAZON_SCRAPER_B_INTERVAL_SECONDS + AMAZON_SCRAPER_B_COUNTDOWN_SECONDS,
         },
     },
     "monitor-creators-api": {
         "task": "monitor.tasks.monitor_creators_api",
-        "schedule": int(os.getenv("AMAZON_CREATORS_API_INTERVAL_SECONDS", "120")),
+        "schedule": AMAZON_CREATORS_API_INTERVAL_SECONDS,
         "options": {
             "queue": "creators_api",
-            "expires": int(os.getenv("AMAZON_CREATORS_API_TASK_EXPIRES_SECONDS", "120")),
+            "countdown": AMAZON_CREATORS_API_COUNTDOWN_SECONDS,
+            "expires": AMAZON_CREATORS_API_INTERVAL_SECONDS + AMAZON_CREATORS_API_COUNTDOWN_SECONDS,
         },
     },
 }
@@ -155,8 +215,15 @@ AMAZON_CREATORS_API_BATCH_SIZE = int(os.getenv("AMAZON_CREATORS_API_BATCH_SIZE",
 AMAZON_CREATORS_API_BATCH_DELAY_SECONDS = float(os.getenv("AMAZON_CREATORS_API_BATCH_DELAY_SECONDS", "1"))
 AMAZON_CREATORS_API_MAX_ATTEMPTS = int(os.getenv("AMAZON_CREATORS_API_MAX_ATTEMPTS", "2"))
 AMAZON_CREATORS_API_RETRY_DELAY_SECONDS = float(os.getenv("AMAZON_CREATORS_API_RETRY_DELAY_SECONDS", "1"))
-AMAZON_CREATORS_API_TASK_TIME_LIMIT_SECONDS = int(os.getenv("AMAZON_CREATORS_API_TASK_TIME_LIMIT_SECONDS", "120"))
+AMAZON_CREATORS_API_TASK_TIME_LIMIT_SECONDS = int(os.getenv("AMAZON_CREATORS_API_TASK_TIME_LIMIT_SECONDS", "240"))
 ALERT_RESERVATION_SECONDS = int(os.getenv("ALERT_RESERVATION_SECONDS", "90"))
+MANUAL_ALERT_USE_STORED_CONTENT = os.getenv("MANUAL_ALERT_USE_STORED_CONTENT", "false").lower() == "true"
+MONITOR_RETENTION_DAYS = int(os.getenv("MONITOR_RETENTION_DAYS", "30"))
+MONITOR_RETENTION_BATCH_SIZE = int(os.getenv("MONITOR_RETENTION_BATCH_SIZE", "1000"))
+if MONITOR_RETENTION_DAYS <= 0:
+    raise ImproperlyConfigured("MONITOR_RETENTION_DAYS debe ser mayor que cero.")
+if MONITOR_RETENTION_BATCH_SIZE <= 0:
+    raise ImproperlyConfigured("MONITOR_RETENTION_BATCH_SIZE debe ser mayor que cero.")
 AMAZON_PROFILE_DIR = os.getenv("AMAZON_PROFILE_DIR", str(BASE_DIR / ".amazon-profile"))
 AMAZON_PROFILE_DIRS = {
     "amazon_a": os.getenv("AMAZON_PROFILE_DIR_AMAZON_A", AMAZON_PROFILE_DIR),
