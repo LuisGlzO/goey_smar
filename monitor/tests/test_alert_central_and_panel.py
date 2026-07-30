@@ -42,7 +42,7 @@ class CentralAlertServiceTests(TestCase):
         self.assertEqual(send.call_count, 1)
 
     @patch("monitor.services.send_product_alert", return_value="102")
-    def test_manual_request_obeys_normal_cooldown(self, send):
+    def test_manual_request_bypasses_normal_cooldown(self, send):
         old_check = self.check()
         sent = Alert.objects.create(
             product=self.product, product_check=old_check, source=ObservationSource.SCRAPER,
@@ -53,11 +53,12 @@ class CentralAlertServiceTests(TestCase):
         result = request_product_alert(
             self.product, manual, ObservationSource.MANUAL, monitor_settings=self.settings
         )
-        self.assertEqual(result.reason, "cooldown")
-        send.assert_not_called()
+        self.assertEqual(result.status, Alert.Status.SENT)
+        self.assertEqual(result.reason, "manual_request")
+        send.assert_called_once()
 
     @patch("monitor.services.send_product_alert", return_value="104")
-    def test_manual_request_obeys_effective_cooldown_without_resetting_level(self, send):
+    def test_manual_request_bypasses_effective_cooldown_without_resetting_level(self, send):
         self.product.cooldown_minutes = 20
         self.product.save(update_fields=("cooldown_minutes",))
         old_check = self.check()
@@ -67,11 +68,11 @@ class CentralAlertServiceTests(TestCase):
         )
         Alert.objects.filter(pk=elapsed.pk).update(created_at=timezone.now() - timedelta(minutes=30))
 
-        blocked = request_product_alert(
+        first_manual = request_product_alert(
             self.product, self.check(ObservationSource.MANUAL, price=None),
             ObservationSource.MANUAL, monitor_settings=self.settings,
         )
-        self.assertEqual(blocked.reason, "cooldown")
+        self.assertEqual(first_manual.status, Alert.Status.SENT)
 
         Alert.objects.filter(pk=elapsed.pk).update(created_at=timezone.now() - timedelta(minutes=41))
         sent = request_product_alert(
@@ -81,12 +82,13 @@ class CentralAlertServiceTests(TestCase):
         self.assertEqual(sent.status, Alert.Status.SENT)
 
         Alert.objects.filter(pk=sent.pk).update(created_at=timezone.now() - timedelta(minutes=30))
-        still_blocked = request_product_alert(
+        second_manual = request_product_alert(
             self.product, self.check(ObservationSource.MANUAL, price=None),
             ObservationSource.MANUAL, monitor_settings=self.settings,
         )
-        self.assertEqual(still_blocked.reason, "cooldown")
-        self.assertEqual(send.call_count, 1)
+        self.assertEqual(second_manual.status, Alert.Status.SENT)
+        self.assertEqual(second_manual.reason, "manual_request")
+        self.assertEqual(send.call_count, 3)
 
     @override_settings(ALERT_RESERVATION_SECONDS=60)
     @patch("monitor.services.send_product_alert", return_value="103")
@@ -101,6 +103,31 @@ class CentralAlertServiceTests(TestCase):
             self.product, self.check(), ObservationSource.SCRAPER, monitor_settings=self.settings
         )
         self.assertEqual(result.reason, "alert_in_progress")
+        send.assert_not_called()
+
+    @patch("monitor.services.send_product_alert", return_value="106")
+    def test_manual_request_keeps_inactive_and_concurrent_safety(self, send):
+        self.product.is_active = False
+        self.product.save(update_fields=("is_active",))
+        inactive = request_product_alert(
+            self.product, self.check(ObservationSource.MANUAL, price=None),
+            ObservationSource.MANUAL, monitor_settings=self.settings,
+        )
+        self.assertEqual(inactive.reason, "product_inactive")
+
+        self.product.is_active = True
+        self.product.save(update_fields=("is_active",))
+        check = self.check(ObservationSource.MANUAL, price=None)
+        Alert.objects.create(
+            product=self.product, product_check=check, source=ObservationSource.MANUAL,
+            status=Alert.Status.PROCESSING, reason="manual_request",
+            reservation_expires_at=timezone.now() + timedelta(seconds=30),
+        )
+        concurrent = request_product_alert(
+            self.product, self.check(ObservationSource.MANUAL, price=None),
+            ObservationSource.MANUAL, monitor_settings=self.settings,
+        )
+        self.assertEqual(concurrent.reason, "alert_in_progress")
         send.assert_not_called()
 
     def test_different_worker_keys_can_run_together(self):
@@ -196,10 +223,12 @@ class ManualAlertPanelTests(TestCase):
         self.assertEqual(response.status_code, 302)
         self.client.login(username="cliente", password="secret")
         response = self.client.get(reverse("manual_alerts"))
-        self.assertContains(response, "Activo")
+        self.assertContains(response, "Sin grupo")
         self.assertNotContains(response, "Inactivo")
+        response = self.client.get(reverse("manual_alerts"), {"group": "ungrouped"})
+        self.assertContains(response, "Activo")
 
-    def test_panel_shows_remaining_effective_cooldown(self):
+    def test_panel_does_not_show_effective_cooldown_as_a_block(self):
         self.active.cooldown_minutes = 20
         self.active.save(update_fields=("cooldown_minutes",))
         check = ProductCheck.objects.create(
@@ -213,11 +242,12 @@ class ManualAlertPanelTests(TestCase):
         Alert.objects.filter(pk=alert.pk).update(created_at=timezone.now() - timedelta(minutes=10))
 
         self.client.login(username="cliente", password="secret")
-        response = self.client.get(reverse("manual_alerts"))
+        response = self.client.get(reverse("manual_alerts"), {"group": "ungrouped"})
 
-        self.assertContains(response, "Cooldown: 30 min")
+        self.assertContains(response, "Envío manual disponible")
+        self.assertNotContains(response, "Cooldown: 30 min")
 
-    def test_panel_loads_all_alert_states_with_one_query(self):
+    def test_panel_does_not_load_alert_states(self):
         for index in range(20):
             Product.objects.create(
                 asin=f"M{index:09d}",
@@ -234,17 +264,17 @@ class ManualAlertPanelTests(TestCase):
             query["sql"] for query in queries
             if 'FROM "monitor_alert"' in query["sql"]
         ]
-        self.assertEqual(len(alert_queries), 1)
+        self.assertEqual(len(alert_queries), 0)
 
-    def test_panel_searches_and_displays_internal_observations(self):
+    def test_panel_search_does_not_match_internal_observations(self):
         self.active.observations = "Dato interno especial"
         self.active.save(update_fields=("observations",))
         self.client.login(username="cliente", password="secret")
 
         response = self.client.get(reverse("manual_alerts"), {"q": "interno especial"})
 
-        self.assertContains(response, "Activo")
-        self.assertContains(response, "Dato interno especial")
+        self.assertNotContains(response, "Activo")
+        self.assertContains(response, "No hay productos activos que coincidan")
 
     @patch("monitor.services.send_product_alert", return_value="301")
     def test_manual_post_sends_and_audits_user(self, send):

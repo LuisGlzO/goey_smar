@@ -73,6 +73,7 @@ def load_alert_rule_states(products):
         return {}
     rows = (
         Alert.objects.filter(product_id__in=product_ids, status=Alert.Status.SENT)
+        .exclude(source=ObservationSource.MANUAL)
         .order_by("product_id", "-created_at", "-pk")
         .values("product_id", "created_at", "reason", "source", "product_check__price")
     )
@@ -314,21 +315,8 @@ def alert_decision(product, check, now=None, monitor_settings=None, rule_state=N
 
 
 def manual_alert_decision(product, now=None, monitor_settings=None, rule_state=None):
-    now = now or timezone.now()
-    monitor_settings = monitor_settings or MonitorSettings.load()
     if not product.is_active:
         return False, "product_inactive"
-    rule_state = rule_state or load_alert_rule_state(product)
-    if anti_false_restock_cooldown_active(rule_state, monitor_settings, now):
-        return False, "anti_false_restock_cooldown"
-    start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    if rule_state.sent_count_since(start_of_day) >= product.max_alerts_per_day:
-        return False, "daily_limit"
-    last_sent = rule_state.last_sent
-    if last_sent and now - last_sent.created_at < timedelta(
-        minutes=effective_cooldown_minutes(product, rule_state=rule_state)
-    ):
-        return False, "cooldown"
     return True, "manual_request"
 
 
@@ -370,6 +358,8 @@ def _reserve_alert(product, check, source, requested_by=None, monitor_settings=N
             precheck_reason = _automatic_alert_precheck(product, check)
         if precheck_reason:
             should_send, reason = False, precheck_reason
+        elif source == ObservationSource.MANUAL:
+            should_send, reason = True, "manual_request"
         else:
             with (
                 timing.stage("rule_state_load", group="alerts", asin=product.asin)
@@ -380,21 +370,13 @@ def _reserve_alert(product, check, source, requested_by=None, monitor_settings=N
                 timing.stage("rule_evaluation", group="alerts", asin=product.asin)
                 if timing else _nullcontext()
             ):
-                if source == ObservationSource.MANUAL:
-                    should_send, reason = manual_alert_decision(
-                        product,
-                        now=now,
-                        monitor_settings=monitor_settings,
-                        rule_state=rule_state,
-                    )
-                else:
-                    should_send, reason = alert_decision(
-                        product,
-                        check,
-                        now=now,
-                        monitor_settings=monitor_settings,
-                        rule_state=rule_state,
-                    )
+                should_send, reason = alert_decision(
+                    product,
+                    check,
+                    now=now,
+                    monitor_settings=monitor_settings,
+                    rule_state=rule_state,
+                )
         if precheck_reason and timing:
             with timing.stage("rule_evaluation", group="alerts", asin=product.asin):
                 pass

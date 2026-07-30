@@ -368,10 +368,33 @@ adicional ni DigitalOcean Spaces.
 
 ## 11. Retencion y contenido local
 
-El monitor periodico de Creators API detecta candidatos, pero no actualiza la
-imagen del catalogo. Con `MANUAL_ALERT_USE_STORED_CONTENT=true`, las alertas
-manuales usan el nombre e imagen guardados. `observations` contiene notas
-internas y nunca se publica en Telegram.
+El monitor periodico de Creators API detecta candidatos, pero no modifica el
+catalogo. El comando `refresh_product_catalog` actualiza los nombres y las
+imagenes guardadas usando lotes de hasta 10 ASIN. Los campos vacios o productos
+omitidos por Creators API no borran el contenido que ya existe.
+
+Pruebe primero sin guardar cambios:
+
+```bash
+docker compose -f docker-compose.prod.yml exec -T web \
+  python manage.py refresh_product_catalog --dry-run
+```
+
+Para actualizar todo el catalogo diariamente a las 04:00 agregue al crontab del
+host:
+
+```cron
+CRON_TZ=America/Mexico_City
+0 4 * * * cd /root/goey_smar && flock -n /tmp/goey-catalog-refresh.lock docker compose -f docker-compose.prod.yml exec -T web nice -n 10 python manage.py refresh_product_catalog >> /var/log/goey-catalog-refresh.log 2>&1
+```
+
+Use `--active-only` si desea limitar la actualizacion a productos activos. El
+comando devuelve un codigo distinto de cero si algun lote falla, conserva los
+lotes actualizados correctamente y deja el detalle en el log.
+
+Con `MANUAL_ALERT_USE_STORED_CONTENT=true`, las alertas manuales usan el nombre e
+imagen guardados. `observations` contiene notas internas y nunca se publica en
+Telegram.
 
 Revise la limpieza antes de ejecutarla:
 

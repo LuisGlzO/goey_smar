@@ -1,21 +1,20 @@
-from datetime import timedelta
-
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required, permission_required
 from django.core.paginator import Paginator
 from django.db import transaction
-from django.db.models import Q
-from django.http import HttpResponseNotAllowed
+from django.db.models import Count, Q
+from django.http import Http404, HttpResponseNotAllowed
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.utils import timezone
 
 from .amazon_creators import creators_api_is_configured, get_products_content, safe_get_product_content
-from .forms import AffiliateLinkGeneratorForm, ProductBulkUpdateForm, ProductForm
+from .forms import AffiliateLinkGeneratorForm, ProductBulkUpdateForm, ProductForm, ProductGroupForm
 from .models import (
     Alert, MonitorRun, MonitorSettings, ObservationSource, Product, ProductCheck,
-    ScraperAccount,
+    ProductGroup, ScraperAccount,
 )
-from .services import effective_cooldown_minutes, load_alert_rule_states, request_product_alert
+from .services import request_product_alert
 
 
 REASON_MESSAGES = {
@@ -108,13 +107,13 @@ def affiliate_link_generator(request):
     })
 
 
-def _refresh_product_image(product):
-    content = safe_get_product_content(product.asin)
+def _apply_creators_content(product, content, *, fill_name=False):
     if content is None:
         return False
+    if fill_name:
+        product.name = content.title
     product.image_url = content.image_url
     product.image_refreshed_at = timezone.now()
-    product.save(update_fields=("image_url", "image_refreshed_at", "updated_at"))
     return bool(content.image_url)
 
 
@@ -124,7 +123,7 @@ def products(request):
     query = request.GET.get("q", "").strip()
     status = request.GET.get("status", "all")
     account = request.GET.get("account", "all")
-    queryset = Product.objects.select_related("scraper_account")
+    queryset = Product.objects.select_related("scraper_account", "group")
     if query:
         queryset = queryset.filter(
             Q(asin__icontains=query) | Q(name__icontains=query) | Q(observations__icontains=query)
@@ -147,12 +146,66 @@ def products(request):
 
 
 @login_required
+@permission_required("monitor.view_product", raise_exception=True)
+def product_groups(request):
+    groups = ProductGroup.objects.annotate(
+        product_count=Count("products"),
+        active_product_count=Count("products", filter=Q(products__is_active=True)),
+    )
+    return render(request, "monitor/product_groups.html", {"groups": groups})
+
+
+@login_required
+@permission_required("monitor.add_product", raise_exception=True)
+def product_group_create(request):
+    form = ProductGroupForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        form.save()
+        messages.success(request, "Grupo creado correctamente.")
+        return redirect("product_groups")
+    return render(request, "monitor/product_group_form.html", {"form": form, "group": None})
+
+
+@login_required
+@permission_required("monitor.change_product", raise_exception=True)
+def product_group_edit(request, group_id):
+    group = get_object_or_404(ProductGroup, pk=group_id)
+    form = ProductGroupForm(request.POST or None, instance=group)
+    if request.method == "POST" and form.is_valid():
+        form.save()
+        messages.success(request, "Grupo actualizado correctamente.")
+        return redirect("product_groups")
+    return render(request, "monitor/product_group_form.html", {"form": form, "group": group})
+
+
+@login_required
+@permission_required("monitor.delete_product", raise_exception=True)
+def product_group_delete(request, group_id):
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+    group = get_object_or_404(ProductGroup, pk=group_id)
+    name = group.name
+    group.delete()
+    messages.success(request, f'Grupo "{name}" eliminado. Sus productos quedaron sin grupo.')
+    return redirect("product_groups")
+
+
+@login_required
 @permission_required("monitor.add_product", raise_exception=True)
 def product_create(request):
     form = ProductForm(request.POST or None)
     if request.method == "POST" and form.is_valid():
-        product = form.save()
-        if _refresh_product_image(product):
+        product = form.save(commit=False)
+        content = safe_get_product_content(product.asin)
+        if not product.name and (content is None or not content.title):
+            form.add_error(
+                "name",
+                "Creators API no devolvió un nombre. Escribe uno o intenta nuevamente.",
+            )
+            return render(request, "monitor/product_form.html", {"form": form, "product": None})
+        has_image = _apply_creators_content(product, content, fill_name=not product.name)
+        product.save()
+        if has_image:
             messages.success(request, "Producto creado y fotografía obtenida desde Amazon.")
         else:
             messages.warning(request, "Producto creado. Creators API no devolvió una fotografía.")
@@ -167,13 +220,22 @@ def product_edit(request, product_id):
     previous_asin = product.asin
     form = ProductForm(request.POST or None, instance=product)
     if request.method == "POST" and form.is_valid():
-        product = form.save()
-        should_refresh = previous_asin != product.asin or not product.image_url
+        product = form.save(commit=False)
+        needs_name = not product.name
+        should_refresh = needs_name or previous_asin != product.asin or not product.image_url
+        content = safe_get_product_content(product.asin) if should_refresh else None
+        if needs_name and (content is None or not content.title):
+            form.add_error(
+                "name",
+                "Creators API no devolvió un nombre. Escribe uno o intenta nuevamente.",
+            )
+            return render(request, "monitor/product_form.html", {"form": form, "product": product})
         if previous_asin != product.asin:
-            Product.objects.filter(pk=product.pk).update(image_url="", image_refreshed_at=None)
             product.image_url = ""
             product.image_refreshed_at = None
-        if should_refresh and not _refresh_product_image(product):
+        has_image = _apply_creators_content(product, content, fill_name=needs_name) if should_refresh else True
+        product.save()
+        if should_refresh and not has_image:
             messages.warning(request, "Cambios guardados, pero Creators API no devolvió una fotografía.")
         else:
             messages.success(request, "Producto actualizado correctamente.")
@@ -191,54 +253,56 @@ def products_bulk_update(request):
         messages.error(request, " ".join(error for errors in form.errors.values() for error in errors))
         return redirect("products")
     updates = {}
-    for field in ("cooldown_minutes", "max_alerts_per_day"):
+    for field in ("cooldown_minutes", "max_alerts_per_day", "max_price", "is_active"):
         if form.cleaned_data[field] is not None:
             updates[field] = form.cleaned_data[field]
+    if form.cleaned_data["scraper_account"] is not None:
+        updates["scraper_account"] = form.cleaned_data["scraper_account"]
     with transaction.atomic():
         updated = Product.objects.filter(pk__in=form.cleaned_data["product_ids"]).update(**updates)
     messages.success(request, f"Productos actualizados: {updated}.")
     return redirect("products")
 
 
-def _cooldown_state(product, monitor_settings, now, rule_state):
-    last_sent = rule_state.last_sent
-    if not last_sent:
-        return {"label": "Disponible", "blocked": False, "remaining_minutes": 0}
-    anti_until = last_sent.created_at + timedelta(
-        minutes=monitor_settings.anti_false_restock_cooldown_minutes
-    )
-    normal_until = last_sent.created_at + timedelta(
-        minutes=effective_cooldown_minutes(product, rule_state=rule_state)
-    )
-    blocked_until = max(anti_until, normal_until)
-    if blocked_until <= now:
-        return {"label": "Disponible", "blocked": False, "remaining_minutes": 0}
-    seconds = max(int((blocked_until - now).total_seconds()), 0)
-    minutes = (seconds + 59) // 60
-    return {"label": f"Cooldown: {minutes} min", "blocked": True, "remaining_minutes": minutes}
-
-
 @login_required
 @permission_required("monitor.send_manual_alert", raise_exception=True)
 def manual_alerts(request):
     query = request.GET.get("q", "").strip()
-    products = Product.objects.filter(is_active=True)
+    group_key = request.GET.get("group", "").strip()
+    products = Product.objects.filter(is_active=True).select_related("group")
+    selected_group = None
+    showing_products = bool(query or group_key)
     if query:
         products = products.filter(
-            Q(asin__icontains=query) | Q(name__icontains=query) | Q(observations__icontains=query)
+            Q(asin__icontains=query) | Q(name__icontains=query)
         )
-    products = list(products)
-    settings = MonitorSettings.load()
-    now = timezone.now()
-    rule_states = load_alert_rule_states(products)
-    rows = [
-        {
-            "product": product,
-            "cooldown": _cooldown_state(product, settings, now, rule_states[product.pk]),
-        }
-        for product in products
-    ]
-    return render(request, "monitor/manual_alerts.html", {"rows": rows, "query": query})
+        group_key = ""
+    elif group_key == "ungrouped":
+        products = products.filter(group__isnull=True)
+        selected_group = "ungrouped"
+    elif group_key:
+        if not group_key.isdigit():
+            raise Http404("Grupo no encontrado.")
+        selected_group = get_object_or_404(ProductGroup, pk=group_key)
+        products = products.filter(group=selected_group)
+
+    rows = [{"product": product} for product in products] if showing_products else []
+    groups = []
+    ungrouped_count = 0
+    if not showing_products:
+        groups = ProductGroup.objects.annotate(
+            active_product_count=Count("products", filter=Q(products__is_active=True))
+        )
+        ungrouped_count = Product.objects.filter(is_active=True, group__isnull=True).count()
+    return render(request, "monitor/manual_alerts.html", {
+        "rows": rows,
+        "groups": groups,
+        "query": query,
+        "group_key": group_key,
+        "selected_group": selected_group,
+        "showing_products": showing_products,
+        "ungrouped_count": ungrouped_count,
+    })
 
 
 @login_required
@@ -265,4 +329,7 @@ def send_manual_alert(request, product_id):
         messages.error(request, REASON_MESSAGES.get(alert.reason, f"No se pudo enviar: {alert.details}"))
     else:
         messages.warning(request, REASON_MESSAGES.get(alert.reason, f"No se puede enviar: {alert.reason}."))
+    group_key = request.POST.get("group", "").strip()
+    if group_key == "ungrouped" or group_key.isdigit():
+        return redirect(f"{reverse('manual_alerts')}?group={group_key}")
     return redirect("manual_alerts")

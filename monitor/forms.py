@@ -2,14 +2,44 @@ import re
 
 from django import forms
 
-from .models import Product
+from .models import Product, ProductGroup, ScraperAccount
+
+
+class ProductGroupForm(forms.ModelForm):
+    class Meta:
+        model = ProductGroup
+        fields = ("name", "description", "color")
+        labels = {
+            "name": "Nombre",
+            "description": "Descripción",
+            "color": "Color",
+        }
+        help_texts = {
+            "description": "Opcional. Se mostrará en la card del grupo.",
+            "color": "Color identificador del grupo.",
+        }
+        widgets = {
+            "name": forms.TextInput(attrs={"autocomplete": "off"}),
+            "description": forms.Textarea(attrs={"rows": 4}),
+            "color": forms.TextInput(attrs={"type": "color"}),
+        }
 
 
 class ProductForm(forms.ModelForm):
+    name = forms.CharField(
+        required=False,
+        max_length=250,
+        label="Nombre",
+        help_text=(
+            "Opcional. Si lo dejas vacío, se obtendrá desde Creators API. "
+            "Es el nombre público que se mostrará en Telegram."
+        ),
+    )
+
     class Meta:
         model = Product
         fields = (
-            "asin", "name", "observations", "scraper_account", "affiliate_url", "max_price",
+            "asin", "name", "observations", "group", "scraper_account", "affiliate_url", "max_price",
             "priority", "is_active", "cooldown_minutes", "max_alerts_per_day",
             "significant_price_drop_percent",
         )
@@ -17,6 +47,7 @@ class ProductForm(forms.ModelForm):
             "asin": "ASIN",
             "name": "Nombre",
             "observations": "Observaciones internas",
+            "group": "Grupo",
             "scraper_account": "Cuenta de Amazon",
             "affiliate_url": "URL de afiliado",
             "max_price": "Precio máximo",
@@ -54,6 +85,22 @@ class ProductBulkUpdateForm(forms.Form):
     product_ids = forms.CharField(required=False, widget=forms.HiddenInput)
     cooldown_minutes = forms.IntegerField(required=False, min_value=0, label="Cooldown (minutos)")
     max_alerts_per_day = forms.IntegerField(required=False, min_value=0, label="Límite de alertas diarias")
+    max_price = forms.DecimalField(
+        required=False, min_value=0, max_digits=12, decimal_places=2, label="Precio máximo"
+    )
+    is_active = forms.TypedChoiceField(
+        required=False,
+        choices=(("", "No modificar"), ("true", "Activo"), ("false", "Inactivo")),
+        coerce=lambda value: value == "true",
+        empty_value=None,
+        label="Estado",
+    )
+    scraper_account = forms.ModelChoiceField(
+        required=False,
+        queryset=ScraperAccount.objects.all(),
+        empty_label="No modificar",
+        label="Cuenta de Amazon / carrito",
+    )
 
     def clean_product_ids(self):
         values = []
@@ -67,8 +114,11 @@ class ProductBulkUpdateForm(forms.Form):
 
     def clean(self):
         cleaned = super().clean()
-        if cleaned.get("cooldown_minutes") is None and cleaned.get("max_alerts_per_day") is None:
-            raise forms.ValidationError("Indica un cooldown, un límite diario o ambos.")
+        editable_fields = (
+            "cooldown_minutes", "max_alerts_per_day", "max_price", "is_active", "scraper_account",
+        )
+        if all(cleaned.get(field) is None for field in editable_fields):
+            raise forms.ValidationError("Indica al menos un campo para actualizar.")
         return cleaned
 
 

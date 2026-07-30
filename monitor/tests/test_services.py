@@ -249,6 +249,30 @@ class AlertDecisionTests(TestCase):
         self.assertEqual(len(rule_state.sent_alerts), 1)
         self.assertEqual(rule_state.last_sent.reason, "first_availability")
 
+    def test_rule_state_excludes_sent_manual_alerts(self):
+        automatic_check = self.make_check()
+        automatic = Alert.objects.create(
+            product=self.product,
+            product_check=automatic_check,
+            source=ObservationSource.SCRAPER,
+            status=Alert.Status.SENT,
+            reason="first_availability",
+        )
+        manual_check = self.make_check()
+        Alert.objects.create(
+            product=self.product,
+            product_check=manual_check,
+            source=ObservationSource.MANUAL,
+            status=Alert.Status.SENT,
+            reason="manual_request",
+        )
+
+        rule_state = load_alert_rule_state(self.product)
+
+        self.assertEqual(len(rule_state.sent_alerts), 1)
+        self.assertEqual(rule_state.last_sent.reason, automatic.reason)
+        self.assertEqual(rule_state.sent_count_since(timezone.now() - timedelta(days=1)), 1)
+
     @patch("monitor.services.load_alert_rule_state")
     def test_alert_decision_reuses_preloaded_rule_state(self, load_rule_state):
         previous_check = self.make_check()

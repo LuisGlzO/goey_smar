@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Alert, CartSnapshotItem, MonitorRun, MonitorSettings, Product, ProductCheck, ScraperAccount
+from .models import Alert, CartSnapshotItem, MonitorRun, MonitorSettings, Product, ProductCheck, ProductGroup, ScraperAccount
 
 
 @admin.register(ScraperAccount)
@@ -24,10 +24,20 @@ class ScraperAccountAdmin(admin.ModelAdmin):
 
 @admin.register(Product)
 class ProductAdmin(admin.ModelAdmin):
-    list_display = ("asin", "name", "scraper_account", "max_price", "priority", "is_active", "cooldown_minutes", "max_alerts_per_day", "image_refreshed_at")
+    list_display = ("asin", "name", "group", "scraper_account", "max_price", "priority", "is_active", "cooldown_minutes", "max_alerts_per_day", "image_refreshed_at")
     readonly_fields = ("image_url", "image_refreshed_at")
-    list_filter = ("scraper_account", "is_active", "priority")
+    list_filter = ("group", "scraper_account", "is_active", "priority")
     search_fields = ("asin", "name", "observations")
+
+
+@admin.register(ProductGroup)
+class ProductGroupAdmin(admin.ModelAdmin):
+    list_display = ("name", "color", "product_count", "updated_at")
+    search_fields = ("name", "description")
+
+    @admin.display(description="Productos")
+    def product_count(self, obj):
+        return obj.products.count()
 
 
 @admin.register(ProductCheck)

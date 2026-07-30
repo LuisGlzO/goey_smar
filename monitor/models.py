@@ -1,5 +1,6 @@
 from django.db import models
 from django.db.models import Q
+from django.core.validators import RegexValidator
 
 
 class ObservationSource(models.TextChoices):
@@ -34,6 +35,36 @@ class ScraperAccount(models.Model):
         self._original_key = self.key
 
 
+class ProductGroup(models.Model):
+    name = models.CharField(max_length=120, unique=True)
+    description = models.TextField(blank=True)
+    color = models.CharField(
+        max_length=7,
+        default="#11999E",
+        validators=[
+            RegexValidator(
+                regex=r"^#[0-9A-Fa-f]{6}$",
+                message="El color debe tener el formato hexadecimal #RRGGBB.",
+            )
+        ],
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("name",)
+        verbose_name = "Grupo de productos"
+        verbose_name_plural = "Grupos de productos"
+
+    def __str__(self):
+        return self.name
+
+    def save(self, *args, **kwargs):
+        self.name = self.name.strip()
+        self.color = self.color.upper()
+        super().save(*args, **kwargs)
+
+
 class Product(models.Model):
     class Priority(models.IntegerChoices):
         LOW = 10, "Baja"
@@ -43,6 +74,13 @@ class Product(models.Model):
     asin = models.CharField(max_length=10, unique=True)
     scraper_account = models.ForeignKey(
         ScraperAccount, on_delete=models.PROTECT, related_name="products", default="amazon_a"
+    )
+    group = models.ForeignKey(
+        ProductGroup,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="products",
     )
     name = models.CharField(max_length=250)
     observations = models.TextField(blank=True)
@@ -54,11 +92,11 @@ class Product(models.Model):
     image_url = models.URLField(max_length=2000, blank=True)
     image_refreshed_at = models.DateTimeField(null=True, blank=True)
     max_price = models.DecimalField(max_digits=12, decimal_places=2)
-    priority = models.IntegerField(choices=Priority.choices, default=Priority.NORMAL)
+    priority = models.IntegerField(choices=Priority.choices, default=Priority.HIGH)
     is_active = models.BooleanField(default=True)
     cooldown_minutes = models.PositiveIntegerField(default=60)
-    max_alerts_per_day = models.PositiveIntegerField(default=3)
-    significant_price_drop_percent = models.DecimalField(max_digits=5, decimal_places=2, default=5)
+    max_alerts_per_day = models.PositiveIntegerField(default=99)
+    significant_price_drop_percent = models.DecimalField(max_digits=5, decimal_places=2, default=1)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
