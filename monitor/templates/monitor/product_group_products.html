@@ -1,0 +1,49 @@
+{% extends "monitor/base.html" %}
+{% block title %}Asignar productos | {{ group.name }} | Goey SMAR{% endblock %}
+{% block content %}
+<form method="post" class="assignment-page" data-group-assignment>{% csrf_token %}
+  <div class="page-heading assignment-heading">
+    <div><a class="back" href="{% url 'product_groups' %}">← Grupos</a><h1>Asignar productos</h1><p>Gestiona los productos asignados al grupo “{{ group.name }}”.</p></div>
+    <div class="assignment-heading-actions"><a class="secondary button-link" href="{% url 'product_groups' %}">Volver</a><button class="primary" type="submit">Guardar cambios</button></div>
+  </div>
+  {% if form.products.errors %}<div class="message error">{{ form.products.errors|join:" " }}</div>{% endif %}
+  <section class="assignment-board">
+    <header class="assignment-summary" style="--group-color:{{ group.color }}">
+      <span class="assignment-color" aria-hidden="true"></span>
+      <div class="assignment-summary-copy"><span class="eyebrow">Grupo actual</span><h2>{{ group.name }}</h2><p>{% if group.description %}{{ group.description }}{% else %}Administra los productos asignados a este grupo.{% endif %}</p></div>
+      <div class="assignment-stat"><small>Grupo</small><strong>{{ group.name }}</strong></div>
+      <div class="assignment-stat"><small>Productos asignados</small><strong data-assigned-total>{{ assigned_products|length }}</strong></div>
+      <div class="assignment-stat"><small>Productos disponibles</small><strong data-available-total>{{ available_products|length }}</strong></div>
+    </header>
+    <div class="assignment-columns">
+      <section class="assignment-column" aria-labelledby="available-title">
+        <div class="assignment-column-head"><div><h3 id="available-title">Productos disponibles</h3><small><span data-available-visible>{{ available_products|length }}</span> elementos</small></div><span class="assignment-badge" data-available-badge>{{ available_products|length }}</span></div>
+        <input class="assignment-search" type="search" placeholder="Buscar productos disponibles..." aria-label="Buscar productos disponibles" data-assignment-search="available">
+        <div class="assignment-list" data-assignment-list="available">
+          {% for product in available_products %}
+            {% include "monitor/includes/group_assignment_product.html" with product=product side="available" %}
+          {% endfor %}
+          <div class="assignment-empty" data-assignment-empty>Sin productos disponibles.</div>
+        </div>
+      </section>
+      <div class="assignment-transfer" aria-label="Acciones de asignación">
+        <button class="secondary" type="button" data-assignment-move="assigned" disabled>Asignar →</button>
+        <button class="secondary" type="button" data-assignment-move="available" disabled>← Quitar</button>
+      </div>
+      <section class="assignment-column" aria-labelledby="assigned-title">
+        <div class="assignment-column-head"><div><h3 id="assigned-title">Productos asignados</h3><small><span data-assigned-visible>{{ assigned_products|length }}</span> elementos</small></div><span class="assignment-badge" data-assigned-badge>{{ assigned_products|length }}</span></div>
+        <input class="assignment-search" type="search" placeholder="Buscar productos asignados..." aria-label="Buscar productos asignados" data-assignment-search="assigned">
+        <div class="assignment-list" data-assignment-list="assigned">
+          {% for product in assigned_products %}
+            {% include "monitor/includes/group_assignment_product.html" with product=product side="assigned" %}
+          {% endfor %}
+          <div class="assignment-empty" data-assignment-empty>Este grupo todavía no tiene productos.</div>
+        </div>
+      </section>
+    </div>
+    <div data-assignment-hidden>
+      {% for product in assigned_products %}<input type="hidden" name="products" value="{{ product.pk }}">{% endfor %}
+    </div>
+  </section>
+</form>
+{% endblock %}

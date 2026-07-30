@@ -58,6 +58,64 @@ class ProductGroupManagementTests(TestCase):
         product.refresh_from_db()
         self.assertIsNone(product.group)
 
+    def test_delete_uses_reusable_confirmation_dialog(self):
+        self.grant("view_product", "delete_product")
+        group = ProductGroup.objects.create(name="Confirmación", color="#123456")
+
+        response = self.client.get(reverse("product_groups"))
+
+        self.assertContains(response, 'data-confirm-dialog', count=1)
+        self.assertContains(response, 'data-confirm-title="Eliminar grupo"')
+        self.assertContains(response, f'¿Eliminar el grupo “{group.name}”?')
+        self.assertNotContains(response, "return confirm(")
+
+    def test_assignment_view_assigns_and_unassigns_multiple_available_products(self):
+        self.grant("view_product", "change_product")
+        group = ProductGroup.objects.create(name="Destino", color="#123456")
+        other_group = ProductGroup.objects.create(name="Otro", color="#654321")
+        assigned = Product.objects.create(
+            asin="B0GROUP006", name="Ya asignado", max_price=100, group=group
+        )
+        ungrouped_a = Product.objects.create(
+            asin="B0GROUP007", name="Disponible A", max_price=100
+        )
+        ungrouped_b = Product.objects.create(
+            asin="B0GROUP008", name="Disponible B", max_price=100
+        )
+        unavailable = Product.objects.create(
+            asin="B0GROUP009", name="No disponible", max_price=100, group=other_group
+        )
+
+        edit_response = self.client.get(reverse("product_group_edit", args=[group.pk]))
+        self.assertNotContains(edit_response, assigned.name)
+        self.assertNotContains(edit_response, "Productos disponibles")
+
+        response = self.client.get(reverse("product_group_products", args=[group.pk]))
+        self.assertContains(response, assigned.name)
+        self.assertContains(response, ungrouped_a.name)
+        self.assertContains(response, ungrouped_b.name)
+        self.assertNotContains(response, unavailable.name)
+
+        response = self.client.post(reverse("product_group_products", args=[group.pk]), {
+            "products": [str(ungrouped_a.pk), str(ungrouped_b.pk)],
+        })
+        self.assertRedirects(response, reverse("product_group_products", args=[group.pk]))
+        assigned.refresh_from_db()
+        ungrouped_a.refresh_from_db()
+        ungrouped_b.refresh_from_db()
+        unavailable.refresh_from_db()
+        self.assertIsNone(assigned.group)
+        self.assertEqual(ungrouped_a.group, group)
+        self.assertEqual(ungrouped_b.group, group)
+        self.assertEqual(unavailable.group, other_group)
+
+        response = self.client.post(reverse("product_group_products", args=[group.pk]), {
+            "products": [str(unavailable.pk)],
+        })
+        self.assertEqual(response.status_code, 200)
+        unavailable.refresh_from_db()
+        self.assertEqual(unavailable.group, other_group)
+
 
 class ManualAlertGroupsTests(TestCase):
     def setUp(self):

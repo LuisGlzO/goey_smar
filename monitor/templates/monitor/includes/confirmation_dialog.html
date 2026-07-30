@@ -1,0 +1,13 @@
+<dialog id="confirmation-dialog" data-confirm-dialog aria-labelledby="confirmation-title" aria-describedby="confirmation-message">
+  <div class="modal-body confirmation-modal">
+    <div class="modal-head">
+      <div class="confirmation-heading"><span class="confirmation-icon" aria-hidden="true">!</span><span><span class="eyebrow">Confirmación requerida</span><h2 id="confirmation-title" data-confirm-title>Confirmar acción</h2></span></div>
+      <button type="button" class="modal-close" data-confirm-cancel aria-label="Cerrar">×</button>
+    </div>
+    <p class="modal-note" id="confirmation-message" data-confirm-message>Esta acción no se puede deshacer.</p>
+    <div class="modal-actions">
+      <button class="secondary" type="button" data-confirm-cancel>Cancelar</button>
+      <button class="danger-button confirmation-submit" type="button" data-confirm-submit>Confirmar</button>
+    </div>
+  </div>
+</dialog>

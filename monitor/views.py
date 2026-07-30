@@ -9,7 +9,10 @@ from django.urls import reverse
 from django.utils import timezone
 
 from .amazon_creators import creators_api_is_configured, get_products_content, safe_get_product_content
-from .forms import AffiliateLinkGeneratorForm, ProductBulkUpdateForm, ProductForm, ProductGroupForm
+from .forms import (
+    AffiliateLinkGeneratorForm, ProductBulkUpdateForm, ProductForm,
+    ProductGroupAssignmentForm, ProductGroupForm,
+)
 from .models import (
     Alert, MonitorRun, MonitorSettings, ObservationSource, Product, ProductCheck,
     ProductGroup, ScraperAccount,
@@ -176,6 +179,33 @@ def product_group_edit(request, group_id):
         messages.success(request, "Grupo actualizado correctamente.")
         return redirect("product_groups")
     return render(request, "monitor/product_group_form.html", {"form": form, "group": group})
+
+
+@login_required
+@permission_required("monitor.change_product", raise_exception=True)
+def product_group_products(request, group_id):
+    group = get_object_or_404(ProductGroup, pk=group_id)
+    form = ProductGroupAssignmentForm(request.POST or None, group=group)
+    if request.method == "POST" and form.is_valid():
+        selected_product_ids = list(form.cleaned_data["products"].values_list("pk", flat=True))
+        with transaction.atomic():
+            Product.objects.filter(group=group).exclude(pk__in=selected_product_ids).update(group=None)
+            Product.objects.filter(
+                pk__in=selected_product_ids,
+                group__isnull=True,
+            ).update(group=group)
+        messages.success(request, "Productos del grupo actualizados correctamente.")
+        return redirect("product_group_products", group_id=group.pk)
+
+    assigned_products = list(group.products.order_by("name", "asin"))
+    available_products = list(Product.objects.filter(group__isnull=True).order_by("name", "asin"))
+    return render(request, "monitor/product_group_products.html", {
+        "form": form,
+        "group": group,
+        "assigned_products": assigned_products,
+        "available_products": available_products,
+        "total_products": len(assigned_products) + len(available_products),
+    })
 
 
 @login_required

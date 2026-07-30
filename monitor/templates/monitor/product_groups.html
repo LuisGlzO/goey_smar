@@ -12,8 +12,9 @@
     <div><span class="eyebrow">{{ group.color }}</span><h2>{{ group.name }}</h2><p>{% if group.description %}{{ group.description }}{% else %}Sin descripción.{% endif %}</p></div>
     <div class="group-counts"><strong>{{ group.product_count }}</strong><span>productos totales</span><strong>{{ group.active_product_count }}</strong><span>activos</span></div>
     <div class="group-actions">
+      {% if perms.monitor.change_product %}<a class="primary button-link" href="{% url 'product_group_products' group.pk %}">Asignar productos</a>{% endif %}
       {% if perms.monitor.change_product %}<a class="secondary button-link" href="{% url 'product_group_edit' group.pk %}">Editar</a>{% endif %}
-      {% if perms.monitor.delete_product %}<form method="post" action="{% url 'product_group_delete' group.pk %}" onsubmit="return confirm('¿Eliminar el grupo {{ group.name|escapejs }}? Sus productos quedarán sin grupo.');">{% csrf_token %}<button class="danger-button" type="submit">Eliminar</button></form>{% endif %}
+      {% if perms.monitor.delete_product %}<form method="post" action="{% url 'product_group_delete' group.pk %}" data-confirm data-confirm-title="Eliminar grupo" data-confirm-message="¿Eliminar el grupo “{{ group.name }}”? Sus productos quedarán sin grupo." data-confirm-label="Eliminar grupo">{% csrf_token %}<button class="danger-button" type="submit">Eliminar</button></form>{% endif %}
     </div>
   </article>
 {% empty %}

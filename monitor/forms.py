@@ -1,6 +1,7 @@
 import re
 
 from django import forms
+from django.db.models import Q
 
 from .models import Product, ProductGroup, ScraperAccount
 
@@ -23,6 +24,20 @@ class ProductGroupForm(forms.ModelForm):
             "description": forms.Textarea(attrs={"rows": 4}),
             "color": forms.TextInput(attrs={"type": "color"}),
         }
+
+
+class ProductGroupAssignmentForm(forms.Form):
+    products = forms.ModelMultipleChoiceField(
+        queryset=Product.objects.none(),
+        required=False,
+        widget=forms.MultipleHiddenInput,
+    )
+
+    def __init__(self, *args, group, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["products"].queryset = Product.objects.filter(
+            Q(group__isnull=True) | Q(group=group)
+        )
 
 
 class ProductForm(forms.ModelForm):

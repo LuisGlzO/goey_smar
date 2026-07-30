@@ -11,6 +11,7 @@ urlpatterns = [
     path("grupos/", views.product_groups, name="product_groups"),
     path("grupos/nuevo/", views.product_group_create, name="product_group_create"),
     path("grupos/<int:group_id>/editar/", views.product_group_edit, name="product_group_edit"),
+    path("grupos/<int:group_id>/productos/", views.product_group_products, name="product_group_products"),
     path("grupos/<int:group_id>/eliminar/", views.product_group_delete, name="product_group_delete"),
     path("comparacion-catalogo-carritos/", views.catalog_cart_comparison, name="catalog_cart_comparison"),
     path("generador-enlaces/", views.affiliate_link_generator, name="affiliate_link_generator"),

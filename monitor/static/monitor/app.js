@@ -23,6 +23,43 @@
     if(root.dataset.themePreference==='system')applyTheme('system');
   });
 
+  const confirmationDialog=document.querySelector('[data-confirm-dialog]');
+  if(confirmationDialog){
+    let pendingConfirmation=null;
+    let pendingSubmitter=null;
+    document.querySelectorAll('form[data-confirm]').forEach(form=>form.addEventListener('submit',event=>{
+      if(form.dataset.confirmApproved==='true'){
+        delete form.dataset.confirmApproved;
+        return;
+      }
+      event.preventDefault();
+      pendingConfirmation=form;
+      pendingSubmitter=event.submitter;
+      confirmationDialog.querySelector('[data-confirm-title]').textContent=form.dataset.confirmTitle||'Confirmar acción';
+      confirmationDialog.querySelector('[data-confirm-message]').textContent=form.dataset.confirmMessage||'Esta acción no se puede deshacer.';
+      confirmationDialog.querySelector('[data-confirm-submit]').textContent=form.dataset.confirmLabel||'Confirmar';
+      confirmationDialog.showModal();
+    }));
+    confirmationDialog.querySelectorAll('[data-confirm-cancel]').forEach(button=>button.addEventListener('click',()=>{
+      confirmationDialog.close();
+    }));
+    confirmationDialog.querySelector('[data-confirm-submit]').addEventListener('click',()=>{
+      if(!pendingConfirmation)return;
+      const form=pendingConfirmation;
+      const submitter=pendingSubmitter;
+      form.dataset.confirmApproved='true';
+      confirmationDialog.close();
+      submitter?form.requestSubmit(submitter):form.requestSubmit();
+    });
+    confirmationDialog.addEventListener('click',event=>{
+      if(event.target===confirmationDialog)confirmationDialog.close();
+    });
+    confirmationDialog.addEventListener('close',()=>{
+      pendingConfirmation=null;
+      pendingSubmitter=null;
+    });
+  }
+
   const sidebar=document.querySelector('[data-sidebar]');
   const sidebarOpen=document.querySelector('[data-sidebar-open]');
   const sidebarClosers=document.querySelectorAll('[data-sidebar-close]');
@@ -117,6 +154,65 @@
     }));
     alertDialog.querySelectorAll('[data-modal-close]').forEach(el=>el.addEventListener('click',()=>alertDialog.close()));
     alertDialog.addEventListener('click',event=>{if(event.target===alertDialog)alertDialog.close();});
+  }
+
+  const assignmentRoot=document.querySelector('[data-group-assignment]');
+  if(assignmentRoot){
+    const lists={
+      available:assignmentRoot.querySelector('[data-assignment-list="available"]'),
+      assigned:assignmentRoot.querySelector('[data-assignment-list="assigned"]'),
+    };
+    const searches={
+      available:assignmentRoot.querySelector('[data-assignment-search="available"]'),
+      assigned:assignmentRoot.querySelector('[data-assignment-search="assigned"]'),
+    };
+    const moveButtons={
+      assigned:assignmentRoot.querySelector('[data-assignment-move="assigned"]'),
+      available:assignmentRoot.querySelector('[data-assignment-move="available"]'),
+    };
+    const items=side=>[...lists[side].querySelectorAll('[data-assignment-item]')];
+    const normalize=value=>value.toLocaleLowerCase('es').normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+    const applyFilter=side=>{
+      const query=normalize(searches[side].value.trim());
+      items(side).forEach(item=>{item.hidden=query&&!normalize(item.dataset.search).includes(query);});
+    };
+    const syncHidden=()=>{
+      const hidden=assignmentRoot.querySelector('[data-assignment-hidden]');
+      hidden.replaceChildren(...items('assigned').map(item=>{
+        const input=document.createElement('input');
+        input.type='hidden';
+        input.name='products';
+        input.value=item.dataset.productId;
+        return input;
+      }));
+    };
+    const sync=()=>{
+      ['available','assigned'].forEach(side=>{
+        applyFilter(side);
+        const sideItems=items(side);
+        const visible=sideItems.filter(item=>!item.hidden).length;
+        assignmentRoot.querySelector(`[data-${side}-total]`).textContent=sideItems.length;
+        assignmentRoot.querySelector(`[data-${side}-badge]`).textContent=sideItems.length;
+        assignmentRoot.querySelector(`[data-${side}-visible]`).textContent=visible;
+        lists[side].querySelector('[data-assignment-empty]').hidden=visible>0;
+      });
+      moveButtons.assigned.disabled=!items('available').some(item=>item.querySelector('[data-assignment-select]').checked);
+      moveButtons.available.disabled=!items('assigned').some(item=>item.querySelector('[data-assignment-select]').checked);
+      syncHidden();
+    };
+    assignmentRoot.querySelectorAll('[data-assignment-select]').forEach(input=>input.addEventListener('change',sync));
+    Object.entries(searches).forEach(([side,input])=>input.addEventListener('input',()=>{applyFilter(side);sync();}));
+    Object.entries(moveButtons).forEach(([target,button])=>button.addEventListener('click',()=>{
+      const source=target==='assigned'?'available':'assigned';
+      const empty=lists[target].querySelector('[data-assignment-empty]');
+      items(source).filter(item=>item.querySelector('[data-assignment-select]').checked).forEach(item=>{
+        item.querySelector('[data-assignment-select]').checked=false;
+        lists[target].insertBefore(item,empty);
+      });
+      sync();
+    }));
+    assignmentRoot.addEventListener('submit',syncHidden);
+    sync();
   }
 
   const bulkDialog=document.querySelector('#bulk-dialog');
