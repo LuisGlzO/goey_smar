@@ -48,11 +48,12 @@ class ProductGroup(models.Model):
             )
         ],
     )
+    display_order = models.PositiveIntegerField(default=0, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        ordering = ("name",)
+        ordering = ("display_order", "name", "pk")
         verbose_name = "Grupo de productos"
         verbose_name_plural = "Grupos de productos"
 
@@ -82,6 +83,7 @@ class Product(models.Model):
         on_delete=models.SET_NULL,
         related_name="products",
     )
+    group_order = models.PositiveIntegerField(default=0)
     name = models.CharField(max_length=250)
     observations = models.TextField(blank=True)
     affiliate_url = models.URLField(
@@ -94,6 +96,10 @@ class Product(models.Model):
     max_price = models.DecimalField(max_digits=12, decimal_places=2)
     priority = models.IntegerField(choices=Priority.choices, default=Priority.HIGH)
     is_active = models.BooleanField(default=True)
+    intentionally_not_in_cart = models.BooleanField(
+        default=False,
+        help_text="Indica que el producto permanece solo en el sistema de forma intencional.",
+    )
     cooldown_minutes = models.PositiveIntegerField(default=60)
     max_alerts_per_day = models.PositiveIntegerField(default=99)
     significant_price_drop_percent = models.DecimalField(max_digits=5, decimal_places=2, default=1)
@@ -102,6 +108,7 @@ class Product(models.Model):
 
     class Meta:
         ordering = ("-priority", "name")
+        indexes = [models.Index(fields=("group", "group_order"), name="product_group_order_idx")]
 
     def __str__(self):
         return f"{self.asin} - {self.name}"

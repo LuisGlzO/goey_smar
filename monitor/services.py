@@ -54,13 +54,14 @@ class SentAlertState:
 @dataclass(frozen=True)
 class AlertRuleState:
     sent_alerts: tuple[SentAlertState, ...]
+    latest_sent_at: datetime | None = None
 
     @property
     def last_sent(self):
         return self.sent_alerts[0] if self.sent_alerts else None
 
     def has_sent_since(self, cutoff):
-        return any(alert.created_at >= cutoff for alert in self.sent_alerts)
+        return self.latest_sent_at is not None and self.latest_sent_at >= cutoff
 
     def sent_count_since(self, cutoff):
         return sum(alert.created_at >= cutoff for alert in self.sent_alerts)
@@ -68,25 +69,35 @@ class AlertRuleState:
 
 def load_alert_rule_states(products):
     product_ids = [product.pk for product in products]
-    states = {product_id: [] for product_id in product_ids}
+    states = {
+        product_id: {"automatic": [], "latest_sent_at": None}
+        for product_id in product_ids
+    }
     if not product_ids:
         return {}
     rows = (
         Alert.objects.filter(product_id__in=product_ids, status=Alert.Status.SENT)
-        .exclude(source=ObservationSource.MANUAL)
         .order_by("product_id", "-created_at", "-pk")
         .values("product_id", "created_at", "reason", "source", "product_check__price")
     )
     for row in rows:
-        states[row["product_id"]].append(SentAlertState(
+        state = states[row["product_id"]]
+        if state["latest_sent_at"] is None:
+            state["latest_sent_at"] = row["created_at"]
+        if row["source"] == ObservationSource.MANUAL:
+            continue
+        state["automatic"].append(SentAlertState(
             created_at=row["created_at"],
             reason=row["reason"],
             source=row["source"],
             price=row["product_check__price"],
         ))
     return {
-        product_id: AlertRuleState(tuple(sent_alerts))
-        for product_id, sent_alerts in states.items()
+        product_id: AlertRuleState(
+            tuple(state["automatic"]),
+            latest_sent_at=state["latest_sent_at"],
+        )
+        for product_id, state in states.items()
     }
 
 
@@ -317,6 +328,11 @@ def alert_decision(product, check, now=None, monitor_settings=None, rule_state=N
 def manual_alert_decision(product, now=None, monitor_settings=None, rule_state=None):
     if not product.is_active:
         return False, "product_inactive"
+    now = now or timezone.now()
+    monitor_settings = monitor_settings or MonitorSettings.load()
+    rule_state = rule_state or load_alert_rule_state(product)
+    if anti_false_restock_cooldown_active(rule_state, monitor_settings, now):
+        return False, "anti_false_restock_cooldown"
     return True, "manual_request"
 
 
@@ -358,8 +374,6 @@ def _reserve_alert(product, check, source, requested_by=None, monitor_settings=N
             precheck_reason = _automatic_alert_precheck(product, check)
         if precheck_reason:
             should_send, reason = False, precheck_reason
-        elif source == ObservationSource.MANUAL:
-            should_send, reason = True, "manual_request"
         else:
             with (
                 timing.stage("rule_state_load", group="alerts", asin=product.asin)
@@ -370,13 +384,21 @@ def _reserve_alert(product, check, source, requested_by=None, monitor_settings=N
                 timing.stage("rule_evaluation", group="alerts", asin=product.asin)
                 if timing else _nullcontext()
             ):
-                should_send, reason = alert_decision(
-                    product,
-                    check,
-                    now=now,
-                    monitor_settings=monitor_settings,
-                    rule_state=rule_state,
-                )
+                if source == ObservationSource.MANUAL:
+                    should_send, reason = manual_alert_decision(
+                        product,
+                        now=now,
+                        monitor_settings=monitor_settings,
+                        rule_state=rule_state,
+                    )
+                else:
+                    should_send, reason = alert_decision(
+                        product,
+                        check,
+                        now=now,
+                        monitor_settings=monitor_settings,
+                        rule_state=rule_state,
+                    )
         if precheck_reason and timing:
             with timing.stage("rule_evaluation", group="alerts", asin=product.asin):
                 pass

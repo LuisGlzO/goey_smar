@@ -144,6 +144,19 @@ class ManualAlertGroupsTests(TestCase):
         self.assertContains(response, "Sin grupo")
         self.assertEqual(response.context["groups"].get(pk=self.group.pk).active_product_count, 1)
 
+    def test_landing_respects_explicit_group_display_order(self):
+        first = ProductGroup.objects.create(name="Primero", color="#111111", display_order=0)
+        self.group.display_order = 2
+        self.group.save(update_fields=("display_order",))
+        middle = ProductGroup.objects.create(name="Segundo", color="#222222", display_order=1)
+
+        response = self.client.get(reverse("manual_alerts"))
+
+        self.assertEqual(
+            [group.pk for group in response.context["groups"]],
+            [first.pk, middle.pk, self.group.pk],
+        )
+
     def test_group_and_global_search_behaviors(self):
         response = self.client.get(reverse("manual_alerts"), {"group": self.group.pk})
         self.assertContains(response, self.assigned.name)

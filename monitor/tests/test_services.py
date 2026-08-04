@@ -259,7 +259,7 @@ class AlertDecisionTests(TestCase):
             reason="first_availability",
         )
         manual_check = self.make_check()
-        Alert.objects.create(
+        manual = Alert.objects.create(
             product=self.product,
             product_check=manual_check,
             source=ObservationSource.MANUAL,
@@ -272,6 +272,8 @@ class AlertDecisionTests(TestCase):
         self.assertEqual(len(rule_state.sent_alerts), 1)
         self.assertEqual(rule_state.last_sent.reason, automatic.reason)
         self.assertEqual(rule_state.sent_count_since(timezone.now() - timedelta(days=1)), 1)
+        self.assertEqual(rule_state.latest_sent_at, manual.created_at)
+        self.assertTrue(rule_state.has_sent_since(timezone.now() - timedelta(minutes=1)))
 
     @patch("monitor.services.load_alert_rule_state")
     def test_alert_decision_reuses_preloaded_rule_state(self, load_rule_state):

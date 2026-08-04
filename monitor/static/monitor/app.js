@@ -208,12 +208,31 @@
       items(source).filter(item=>item.querySelector('[data-assignment-select]').checked).forEach(item=>{
         item.querySelector('[data-assignment-select]').checked=false;
         lists[target].insertBefore(item,empty);
+        item.draggable=target==='assigned';
+        item.toggleAttribute('data-sort-item',target==='assigned');
+        let controls=item.querySelector('.sort-controls');
+        if(target==='assigned'&&!controls){
+          controls=document.createElement('span'); controls.className='sort-controls';
+          controls.innerHTML='<button type="button" class="secondary" data-sort-move="up">↑</button><button type="button" class="secondary" data-sort-move="down">↓</button>';
+          item.append(controls);
+        }else if(target==='available'){controls?.remove();}
       });
       sync();
     }));
     assignmentRoot.addEventListener('submit',syncHidden);
     sync();
   }
+
+  const initSortable=(list,onChange=()=>{})=>{
+    if(!list)return;
+    let dragged=null;
+    list.addEventListener('dragstart',event=>{dragged=event.target.closest('[data-sort-item]');dragged?.classList.add('sorting');});
+    list.addEventListener('dragover',event=>{if(!dragged)return;event.preventDefault();const target=event.target.closest('[data-sort-item]');if(!target||target===dragged)return;const box=target.getBoundingClientRect();list.insertBefore(dragged,event.clientY<box.top+box.height/2?target:target.nextSibling);onChange();});
+    list.addEventListener('dragend',()=>{dragged?.classList.remove('sorting');dragged=null;onChange();});
+    list.addEventListener('click',event=>{const button=event.target.closest('[data-sort-move]');if(!button)return;const item=button.closest('[data-sort-item]');if(button.dataset.sortMove==='up'&&item.previousElementSibling?.matches('[data-sort-item]'))list.insertBefore(item,item.previousElementSibling);if(button.dataset.sortMove==='down'&&item.nextElementSibling?.matches('[data-sort-item]'))list.insertBefore(item.nextElementSibling,item);onChange();});
+  };
+  if(assignmentRoot)initSortable(assignmentRoot.querySelector('[data-assignment-list="assigned"]'),()=>assignmentRoot.querySelector('[data-assignment-hidden]')?.replaceChildren(...[...assignmentRoot.querySelectorAll('[data-assignment-list="assigned"] [data-assignment-item]')].map(item=>{const input=document.createElement('input');input.type='hidden';input.name='products';input.value=item.dataset.productId;return input;})));
+  document.querySelectorAll('[data-sort-form]').forEach(form=>{const list=form.querySelector('[data-sort-list]');const syncOrder=()=>{const hidden=form.querySelector('[data-sort-hidden]');hidden.replaceChildren(...[...list.querySelectorAll('[data-sort-item]')].map(item=>{const input=document.createElement('input');input.type='hidden';input.name='groups';input.value=item.dataset.sortId;return input;}));};initSortable(list,syncOrder);form.addEventListener('submit',syncOrder);syncOrder();});
 
   const bulkDialog=document.querySelector('#bulk-dialog');
   if(bulkDialog){

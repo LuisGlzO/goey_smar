@@ -5,7 +5,7 @@
   <div>
     <a class="back" href="{% url 'dashboard' %}">← Centro de herramientas</a>
     <h1>Catálogo vs. carritos</h1>
-    <p>Compara el catálogo del sistema con la última lectura exitosa de cada cuenta de Amazon.</p>
+    <p>Consulta en qué carrito aparece cada producto usando la última lectura exitosa de cada cuenta.</p>
   </div>
 </div>
 
@@ -13,48 +13,71 @@
   {% for snapshot in account_snapshots %}
     <div>
       <strong>{{ snapshot.account.name }}</strong>
-        {% if snapshot.run %}<span>Actualizado {{ snapshot.run.finished_at|date:"d/m/Y H:i" }}</span>
-        {% else %}<span class="snapshot-missing">Sin lecturas exitosas</span>{% endif %}
+      {% if snapshot.run %}<span>Actualizado {{ snapshot.run.finished_at|date:"d/m/Y H:i" }}</span>
+      {% else %}<span class="snapshot-missing">Sin lecturas exitosas</span>{% endif %}
     </div>
   {% endfor %}
 </div>
 
 <section class="comparison-section">
   <div class="section-head">
-    <div><span class="eyebrow">Fuera del catálogo</span><h2>En carritos, no en el sistema</h2><p>Productos detectados en cualquiera de las dos cuentas que todavía no están registrados.</p></div>
-    <span class="count">{{ only_in_cart|length }} productos</span>
+    <div><span class="eyebrow">Conciliación completa</span><h2>Productos del sistema</h2><p>La cuenta asignada controla el scraper; las etiquetas muestran la presencia real en cada carrito.</p></div>
+    <span class="count">{{ catalog_rows|length }} productos</span>
   </div>
-  <div class="comparison-list">
-    {% for item in only_in_cart %}
-      <article class="comparison-row">
-        <span class="comparison-icon">?</span>
-        <span class="comparison-identity"><strong>{{ item.raw_text|truncatechars:110|default:"Producto sin nombre disponible" }}</strong><code>{{ item.asin }}</code></span>
-        <span><span class="status neutral">{{ item.scraper_account.name }}</span><small>{{ item.get_source_display|default:item.source }}</small></span>
-        <span>{% if item.price %}<strong>${{ item.price }}</strong>{% else %}<span class="muted">Sin precio</span>{% endif %}</span>
-        <span>{% if item.product_url %}<a class="row-action" href="{{ item.product_url }}" target="_blank" rel="noopener">Ver en Amazon ↗</a>{% endif %}</span>
+  <nav class="comparison-filters" aria-label="Filtrar productos por diagnóstico">
+    <a class="comparison-filter filter-all {% if status_filter == 'all' %}active{% endif %}" href="{% url 'catalog_cart_comparison' %}" {% if status_filter == 'all' %}aria-current="page"{% endif %}><i aria-hidden="true"></i>Todos <span>{{ status_counts.all }}</span></a>
+    <a class="comparison-filter filter-reconciled {% if status_filter == 'reconciled' %}active{% endif %}" href="{% url 'catalog_cart_comparison' %}?status=reconciled" {% if status_filter == 'reconciled' %}aria-current="page"{% endif %}><i aria-hidden="true"></i>Conciliados <span>{{ status_counts.reconciled }}</span></a>
+    <a class="comparison-filter filter-absent {% if status_filter == 'absent' %}active{% endif %}" href="{% url 'catalog_cart_comparison' %}?status=absent" {% if status_filter == 'absent' %}aria-current="page"{% endif %}><i aria-hidden="true"></i>Ausentes en carritos <span>{{ status_counts.absent }}</span></a>
+    <a class="comparison-filter filter-intentional {% if status_filter == 'intentional' %}active{% endif %}" href="{% url 'catalog_cart_comparison' %}?status=intentional" {% if status_filter == 'intentional' %}aria-current="page"{% endif %}><i aria-hidden="true"></i>Ausencia intencional <span>{{ status_counts.intentional }}</span></a>
+  </nav>
+  <div class="comparison-list catalog-comparison-list">
+    {% for row in catalog_rows %}
+      <article class="comparison-row catalog-comparison-row">
+        <span class="catalog-image"><span>{{ row.product.name|slice:":2"|upper }}</span>{% if row.product.image_url %}<img src="{{ row.product.image_url }}" alt="" loading="lazy" onerror="this.remove()">{% endif %}</span>
+        <span class="comparison-identity"><strong>{{ row.product.name }}</strong><code>{{ row.product.asin }}</code><small>Asignado: {{ row.product.scraper_account.name }} · {% if row.product.is_active %}Activo{% else %}Inactivo{% endif %}</small></span>
+        <span class="cart-presence-list">
+          {% for state in row.cart_states %}
+            {% if not state.has_snapshot %}<span class="cart-presence unknown">{{ state.account.name }}: Sin datos</span>
+            {% elif state.present %}<span class="cart-presence present">{{ state.account.name }}: Presente</span>
+            {% else %}<span class="cart-presence absent">{{ state.account.name }}: Ausente</span>{% endif %}
+          {% endfor %}
+        </span>
+        <span><span class="diagnostic {{ row.diagnostic }}">{{ row.diagnostic_label }}</span>{% if row.product.intentionally_not_in_cart %}<small>Solo afecta esta conciliación</small>{% endif %}</span>
+        <span class="comparison-actions">
+          {% if perms.monitor.change_product %}
+            <form method="post" action="{% url 'toggle_product_cart_intention' row.product.pk %}?status={{ status_filter }}">{% csrf_token %}<button class="intention-toggle" type="submit">{% if row.product.intentionally_not_in_cart %}Quitar marca{% else %}Marcar intencional{% endif %}</button></form>
+          {% endif %}
+          <a class="row-action" href="{% url 'product_edit' row.product.pk %}">Editar →</a>
+        </span>
       </article>
     {% empty %}
-      <div class="empty-card">Todos los productos leídos en los carritos existen en el catálogo.</div>
+      <div class="empty-card">No hay productos que coincidan con este filtro.</div>
     {% endfor %}
   </div>
 </section>
 
 <section class="comparison-section">
   <div class="section-head">
-    <div><span class="eyebrow">Fuera del carrito</span><h2>En el sistema, no en su carrito</h2><p>Productos del catálogo ausentes en la última lectura de la cuenta que tienen asignada.</p></div>
-    <span class="count">{{ only_in_catalog|length }} productos</span>
+    <div><span class="eyebrow">Fuera del catálogo</span><h2>En carritos, no en el sistema</h2><p>Cada ASIN aparece una sola vez, incluso si fue detectado en más de un carrito.</p></div>
+    <span class="count">{{ external_rows|length }} productos</span>
   </div>
   <div class="comparison-list">
-    {% for product in only_in_catalog %}
-      <article class="comparison-row">
-        <span class="catalog-image"><span>{{ product.name|slice:":2"|upper }}</span>{% if product.image_url %}<img src="{{ product.image_url }}" alt="" loading="lazy" onerror="this.remove()">{% endif %}</span>
-        <span class="comparison-identity"><strong>{{ product.name }}</strong><code>{{ product.asin }}</code></span>
-        <span><span class="status neutral">{{ product.scraper_account.name }}</span><small>{% if product.is_active %}Activo{% else %}Inactivo{% endif %}</small></span>
-        <span><strong>Máx. ${{ product.max_price }}</strong></span>
-        <span><a class="row-action" href="{% url 'product_edit' product.pk %}">Editar →</a></span>
+    {% for row in external_rows %}
+      <article class="comparison-row external-comparison-row">
+        <span class="comparison-icon">?</span>
+        <span class="comparison-identity"><strong>{{ row.item.raw_text|truncatechars:110|default:"Producto sin nombre disponible" }}</strong><code>{{ row.asin }}</code></span>
+        <span class="cart-presence-list">
+          {% for state in row.cart_states %}
+            {% if not state.has_snapshot %}<span class="cart-presence unknown">{{ state.account.name }}: Sin datos</span>
+            {% elif state.present %}<span class="cart-presence present">{{ state.account.name }}: Presente</span>
+            {% else %}<span class="cart-presence absent">{{ state.account.name }}: Ausente</span>{% endif %}
+          {% endfor %}
+        </span>
+        <span>{% if row.item.price %}<strong>${{ row.item.price }}</strong>{% else %}<span class="muted">Sin precio</span>{% endif %}</span>
+        <span>{% if row.item.product_url %}<a class="row-action" href="{{ row.item.product_url }}" target="_blank" rel="noopener">Ver en Amazon ↗</a>{% endif %}</span>
       </article>
     {% empty %}
-      <div class="empty-card">Todos los productos del catálogo están presentes en su carrito asignado.</div>
+      <div class="empty-card">Todos los productos leídos en los carritos existen en el catálogo.</div>
     {% endfor %}
   </div>
 </section>

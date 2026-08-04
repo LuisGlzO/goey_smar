@@ -39,6 +39,17 @@ class ProductGroupAssignmentForm(forms.Form):
             Q(group__isnull=True) | Q(group=group)
         )
 
+    def clean_products(self):
+        products = self.cleaned_data["products"]
+        raw_ids = self.data.getlist("products")
+        if len(raw_ids) != len(set(raw_ids)) or any(not value.isdigit() for value in raw_ids):
+            raise forms.ValidationError("El orden de productos contiene valores inválidos o duplicados.")
+        cleaned_ids = {str(pk) for pk in products.values_list("pk", flat=True)}
+        if set(raw_ids) != cleaned_ids:
+            raise forms.ValidationError("El orden de productos no coincide con los productos permitidos.")
+        self.ordered_product_ids = [int(value) for value in raw_ids]
+        return products
+
 
 class ProductForm(forms.ModelForm):
     name = forms.CharField(
@@ -55,7 +66,7 @@ class ProductForm(forms.ModelForm):
         model = Product
         fields = (
             "asin", "name", "observations", "group", "scraper_account", "affiliate_url", "max_price",
-            "priority", "is_active", "cooldown_minutes", "max_alerts_per_day",
+            "priority", "is_active", "intentionally_not_in_cart", "cooldown_minutes", "max_alerts_per_day",
             "significant_price_drop_percent",
         )
         labels = {
@@ -68,6 +79,7 @@ class ProductForm(forms.ModelForm):
             "max_price": "Precio máximo",
             "priority": "Prioridad",
             "is_active": "Producto activo",
+            "intentionally_not_in_cart": "Solo en el sistema a propósito",
             "cooldown_minutes": "Cooldown (minutos)",
             "max_alerts_per_day": "Límite de alertas diarias",
             "significant_price_drop_percent": "Caída significativa de precio (%)",
@@ -77,6 +89,10 @@ class ProductForm(forms.ModelForm):
             "name": "Nombre público exacto que se mostrará en la alerta de Telegram.",
             "observations": "Anotaciones internas. Nunca se incluyen en las alertas.",
             "affiliate_url": "Opcional. Tiene prioridad sobre el enlace generado automáticamente.",
+            "intentionally_not_in_cart": (
+                "Solo cambia el diagnóstico de Catálogo vs. carritos; no modifica "
+                "scrapers, Creators API ni alertas."
+            ),
         }
         widgets = {
             "asin": forms.TextInput(attrs={"maxlength": 10, "autocomplete": "off"}),

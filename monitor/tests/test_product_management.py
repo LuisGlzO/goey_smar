@@ -70,6 +70,25 @@ class ProductManagementTests(TestCase):
         self.assertEqual(product.image_url, "https://m.media-amazon.com/photo.jpg")
         self.assertIsNotNone(product.image_refreshed_at)
 
+    @patch("monitor.views.safe_get_product_content", return_value=None)
+    def test_create_and_edit_persist_intentional_cart_absence(self, get_content):
+        self.grant("view_product", "add_product", "change_product")
+        response = self.client.post(
+            reverse("product_create"),
+            self.payload(intentionally_not_in_cart="on"),
+        )
+        self.assertRedirects(response, reverse("products"))
+        product = Product.objects.get(asin="B0NEW12345")
+        self.assertTrue(product.intentionally_not_in_cart)
+
+        response = self.client.post(
+            reverse("product_edit", args=[product.pk]),
+            self.payload(asin=product.asin, name=product.name),
+        )
+        self.assertRedirects(response, reverse("products"))
+        product.refresh_from_db()
+        self.assertFalse(product.intentionally_not_in_cart)
+
     @patch("monitor.views.safe_get_product_content")
     def test_create_uses_creators_title_when_name_is_empty(self, get_content):
         get_content.return_value = CreatorProductContent(

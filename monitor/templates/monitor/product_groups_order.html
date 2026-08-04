@@ -1,0 +1,10 @@
+{% extends "monitor/base.html" %}
+{% block title %}Ordenar grupos | Goey SMAR{% endblock %}
+{% block content %}
+<form method="post" class="assignment-page" data-sort-form>{% csrf_token %}
+  <div class="page-heading"><div><a class="back" href="{% url 'product_groups' %}">← Grupos</a><h1>Ordenar grupos</h1><p>Arrastra los grupos para definir cómo aparecerán en Alertas manuales.</p></div><div class="assignment-heading-actions"><a class="secondary button-link" href="{% url 'product_groups' %}">Cancelar</a><button class="primary" type="submit">Guardar orden</button></div></div>
+  <section class="assignment-board group-order-board"><div class="sortable-list" data-sort-list>
+  {% for group in groups %}<article class="sortable-row" draggable="true" data-sort-item data-sort-id="{{ group.pk }}"><span class="sort-handle" aria-hidden="true">⠿</span><span class="sortable-row-copy"><strong>{{ group.name }}</strong><small>{{ group.description|default:"Sin descripción."|truncatechars:100 }}</small></span><span class="sort-controls"><button type="button" class="secondary" data-sort-move="up" aria-label="Subir {{ group.name }}">↑</button><button type="button" class="secondary" data-sort-move="down" aria-label="Bajar {{ group.name }}">↓</button></span></article>{% empty %}<div class="empty-card">No hay grupos para ordenar.</div>{% endfor %}
+  </div><div data-sort-hidden></div></section>
+</form>
+{% endblock %}

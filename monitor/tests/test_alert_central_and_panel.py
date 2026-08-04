@@ -73,6 +73,9 @@ class CentralAlertServiceTests(TestCase):
             ObservationSource.MANUAL, monitor_settings=self.settings,
         )
         self.assertEqual(first_manual.status, Alert.Status.SENT)
+        Alert.objects.filter(pk=first_manual.pk).update(
+            created_at=timezone.now() - timedelta(minutes=10)
+        )
 
         Alert.objects.filter(pk=elapsed.pk).update(created_at=timezone.now() - timedelta(minutes=41))
         sent = request_product_alert(
@@ -89,6 +92,41 @@ class CentralAlertServiceTests(TestCase):
         self.assertEqual(second_manual.status, Alert.Status.SENT)
         self.assertEqual(second_manual.reason, "manual_request")
         self.assertEqual(send.call_count, 3)
+
+    @patch("monitor.services.send_product_alert", return_value="107")
+    def test_recent_automatic_alert_blocks_manual_request(self, send):
+        automatic = request_product_alert(
+            self.product, self.check(), ObservationSource.SCRAPER, monitor_settings=self.settings
+        )
+        manual = request_product_alert(
+            self.product, self.check(ObservationSource.MANUAL, price=None),
+            ObservationSource.MANUAL, monitor_settings=self.settings,
+        )
+
+        self.assertEqual(automatic.status, Alert.Status.SENT)
+        self.assertEqual(manual.status, Alert.Status.SKIPPED)
+        self.assertEqual(manual.reason, "anti_false_restock_cooldown")
+        self.assertEqual(send.call_count, 1)
+
+    @patch("monitor.services.send_product_alert", return_value="108")
+    def test_recent_manual_alert_blocks_automatic_and_manual_sources(self, send):
+        first_manual = request_product_alert(
+            self.product, self.check(ObservationSource.MANUAL, price=None),
+            ObservationSource.MANUAL, monitor_settings=self.settings,
+        )
+        automatic = request_product_alert(
+            self.product, self.check(ObservationSource.CREATORS_API),
+            ObservationSource.CREATORS_API, monitor_settings=self.settings,
+        )
+        second_manual = request_product_alert(
+            self.product, self.check(ObservationSource.MANUAL, price=None),
+            ObservationSource.MANUAL, monitor_settings=self.settings,
+        )
+
+        self.assertEqual(first_manual.status, Alert.Status.SENT)
+        self.assertEqual(automatic.reason, "anti_false_restock_cooldown")
+        self.assertEqual(second_manual.reason, "anti_false_restock_cooldown")
+        self.assertEqual(send.call_count, 1)
 
     @override_settings(ALERT_RESERVATION_SECONDS=60)
     @patch("monitor.services.send_product_alert", return_value="103")
@@ -247,7 +285,7 @@ class ManualAlertPanelTests(TestCase):
         self.assertContains(response, "Envío manual disponible")
         self.assertNotContains(response, "Cooldown: 30 min")
 
-    def test_panel_does_not_load_alert_states(self):
+    def test_panel_group_cover_does_not_load_alert_states(self):
         for index in range(20):
             Product.objects.create(
                 asin=f"M{index:09d}",
@@ -265,6 +303,31 @@ class ManualAlertPanelTests(TestCase):
             if 'FROM "monitor_alert"' in query["sql"]
         ]
         self.assertEqual(len(alert_queries), 0)
+
+    def test_panel_marks_anti_false_with_one_embedded_alert_subquery(self):
+        settings = MonitorSettings.load()
+        settings.anti_false_restock_cooldown_minutes = 5
+        settings.save(update_fields=("anti_false_restock_cooldown_minutes",))
+        check = ProductCheck.objects.create(
+            product=self.active, source=ObservationSource.MANUAL,
+            availability=ProductCheck.Availability.AVAILABLE,
+        )
+        Alert.objects.create(
+            product=self.active, product_check=check, source=ObservationSource.MANUAL,
+            status=Alert.Status.SENT, reason="manual_request",
+        )
+        self.client.login(username="cliente", password="secret")
+
+        with CaptureQueriesContext(connection) as queries:
+            response = self.client.get(reverse("manual_alerts"), {"group": "ungrouped"})
+
+        self.assertContains(response, "Cooldown anti-falso-restock activo")
+        product_queries_with_alert_subquery = [
+            query["sql"] for query in queries
+            if 'FROM "monitor_product"' in query["sql"]
+            and 'monitor_alert' in query["sql"]
+        ]
+        self.assertEqual(len(product_queries_with_alert_subquery), 1)
 
     def test_panel_search_does_not_match_internal_observations(self):
         self.active.observations = "Dato interno especial"

@@ -3,7 +3,7 @@
 {% block content %}
 <div class="page-heading">
   <div><a class="back" href="{% url 'dashboard' %}">← Centro de herramientas</a><h1>Grupos de productos</h1><p>Organiza el catálogo para facilitar el envío de alertas manuales.</p></div>
-  {% if perms.monitor.add_product %}<a class="primary button-link" href="{% url 'product_group_create' %}">+ Nuevo grupo</a>{% endif %}
+  <div class="assignment-heading-actions">{% if perms.monitor.change_product %}<a class="secondary button-link" href="{% url 'product_groups_order' %}">Ordenar grupos</a>{% endif %}{% if perms.monitor.add_product %}<a class="primary button-link" href="{% url 'product_group_create' %}">+ Nuevo grupo</a>{% endif %}</div>
 </div>
 <div class="group-management-grid">
 {% for group in groups %}

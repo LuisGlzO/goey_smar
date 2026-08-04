@@ -27,10 +27,10 @@
 {% else %}
 <div class="product-grid">
 {% for row in rows %}
-  <button class="product-alert-card" type="button" data-product-card data-name="{{ row.product.name }}" data-asin="{{ row.product.asin }}" data-status="Envío manual disponible" data-observations="{{ row.product.observations }}" data-action="{% url 'send_manual_alert' row.product.pk %}">
+  <button class="product-alert-card" type="button" data-product-card data-name="{{ row.product.name }}" data-asin="{{ row.product.asin }}" data-status="{% if row.product.anti_false_active %}Cooldown anti-falso-restock activo{% else %}Envío manual disponible{% endif %}" data-observations="{{ row.product.observations }}" data-action="{% url 'send_manual_alert' row.product.pk %}">
     <span class="alert-card-media"><span class="alert-image-fallback">{{ row.product.name|slice:":2"|upper }}</span>{% if row.product.image_url %}<img src="{{ row.product.image_url }}" alt="" loading="lazy" onerror="this.remove()">{% endif %}</span>
     <span class="alert-card-body">
-      <span class="simple-card-status"><span class="status ready">Envío manual disponible</span></span>
+      <span class="simple-card-status"><span class="status {% if row.product.anti_false_active %}blocked{% else %}ready{% endif %}">{% if row.product.anti_false_active %}Cooldown anti-falso-restock activo{% else %}Envío manual disponible{% endif %}</span></span>
       <strong class="simple-card-name">{{ row.product.name }}</strong>
       {% if row.product.observations %}<small>{{ row.product.observations|truncatechars:100 }}</small>{% endif %}
       <span class="simple-card-action-row"><span class="simple-card-action">Enviar alerta <b>→</b></span></span>
@@ -43,7 +43,7 @@
   <div class="modal-body">
     <div class="modal-head"><div><span class="eyebrow">Confirmación</span><h2 id="modal-title">Enviar alerta</h2></div><button type="button" class="modal-close" data-modal-close aria-label="Cerrar">×</button></div>
     <div class="modal-product"><span class="product-avatar">↗</span><span><strong data-modal-name></strong><span data-modal-asin></span><span data-modal-status></span><span data-modal-observations></span></span></div>
-    <p class="modal-note">La alerta se publicará inmediatamente, omitiendo cooldowns y límites. Este envío no modificará las reglas automáticas del producto.</p>
+    <p class="modal-note">La alerta omite el cooldown normal, el escalonado y los límites, pero respeta el cooldown anti-falso-restock. El servidor validará nuevamente el estado antes de enviarla.</p>
     <form method="post">{% csrf_token %}<input type="hidden" name="group" value="{{ group_key }}"><div class="modal-actions"><button class="secondary" type="button" data-modal-close>Cancelar</button><button class="primary" type="submit" onclick="this.disabled=true;this.form.submit()">Confirmar y enviar</button></div></form>
   </div>
 </dialog>
