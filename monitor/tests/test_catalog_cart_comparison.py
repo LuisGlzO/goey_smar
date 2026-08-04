@@ -171,7 +171,8 @@ class CatalogCartComparisonTests(TestCase):
 
         self.assertEqual([row["product"] for row in response.context["catalog_rows"]], [absent])
         self.assertEqual(response.context["status_counts"], {
-            "all": 3, "reconciled": 1, "absent": 1, "intentional": 1,
+            "all": 3, "reconciled": 1, "absent": 1, "misaligned": 0,
+            "intentional": 1,
         })
         self.assertNotContains(response, intentional.name)
         self.assertContains(response, "Ausentes en carritos")
@@ -188,3 +189,19 @@ class CatalogCartComparisonTests(TestCase):
             response, reverse("catalog_cart_comparison") + "?status=absent",
             fetch_redirect_response=False,
         )
+
+    def test_filters_misaligned_products(self):
+        product = Product.objects.create(
+            asin="B0FILTER05", name="Desalineado", max_price=100,
+            scraper_account_id="amazon_a",
+        )
+        self.snapshot("amazon_a")
+        self.snapshot("amazon_b", product.asin)
+
+        response = self.client.get(
+            reverse("catalog_cart_comparison"), {"status": "misaligned"}
+        )
+
+        self.assertEqual([row["product"] for row in response.context["catalog_rows"]], [product])
+        self.assertEqual(response.context["status_counts"]["misaligned"], 1)
+        self.assertContains(response, "Asignación desalineada")

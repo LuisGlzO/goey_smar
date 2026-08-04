@@ -41,7 +41,7 @@ def dashboard(request):
 @permission_required("monitor.view_product", raise_exception=True)
 def catalog_cart_comparison(request):
     status_filter = request.GET.get("status", "all")
-    allowed_status_filters = {"all", "reconciled", "absent", "intentional"}
+    allowed_status_filters = {"all", "reconciled", "absent", "intentional", "misaligned"}
     if status_filter not in allowed_status_filters:
         status_filter = "all"
     accounts = list(ScraperAccount.objects.all())
@@ -106,6 +106,7 @@ def catalog_cart_comparison(request):
         "all": len(catalog_rows),
         "reconciled": sum(row["diagnostic"] == "reconciled" for row in catalog_rows),
         "absent": sum(row["diagnostic"] == "absent" for row in catalog_rows),
+        "misaligned": sum(row["diagnostic"] == "misaligned" for row in catalog_rows),
         "intentional": sum(
             row["diagnostic"] in {"intentional_absence", "intentional_present"}
             for row in catalog_rows
@@ -115,6 +116,8 @@ def catalog_cart_comparison(request):
         catalog_rows = [row for row in catalog_rows if row["diagnostic"] == "reconciled"]
     elif status_filter == "absent":
         catalog_rows = [row for row in catalog_rows if row["diagnostic"] == "absent"]
+    elif status_filter == "misaligned":
+        catalog_rows = [row for row in catalog_rows if row["diagnostic"] == "misaligned"]
     elif status_filter == "intentional":
         catalog_rows = [
             row for row in catalog_rows
@@ -162,7 +165,7 @@ def toggle_product_cart_intention(request, product_id):
     else:
         messages.success(request, f'"{product.name}" volverá a evaluarse como posible discrepancia.')
     status_filter = request.GET.get("status", "all")
-    if status_filter not in {"reconciled", "absent", "intentional"}:
+    if status_filter not in {"reconciled", "absent", "intentional", "misaligned"}:
         return redirect("catalog_cart_comparison")
     return redirect(f'{reverse("catalog_cart_comparison")}?status={status_filter}')
 
