@@ -1,6 +1,24 @@
+import json
+
 from django.contrib import admin
+from django.core.paginator import Paginator
+from django.utils.functional import cached_property
 
 from .models import Alert, CartSnapshotItem, MonitorRun, MonitorSettings, Product, ProductCheck, ProductGroup, ScraperAccount
+
+
+class EstimatedCountPaginator(Paginator):
+    """Use the database planner estimate instead of COUNT(*) on large tables."""
+
+    @cached_property
+    def count(self):
+        try:
+            explanation = self.object_list.explain(format="json")
+            if isinstance(explanation, str):
+                explanation = json.loads(explanation)
+            return max(int(explanation[0]["Plan"]["Plan Rows"]), 1)
+        except (AttributeError, KeyError, TypeError, ValueError, NotImplementedError):
+            return super().count
 
 
 @admin.register(ScraperAccount)
@@ -61,6 +79,11 @@ class AlertAdmin(admin.ModelAdmin):
     list_display = ("created_at", "product", "source", "status", "reason", "requested_by")
     list_filter = ("source", "status", "reason")
     readonly_fields = ("product", "product_check", "source", "requested_by", "created_at", "status", "reason", "details", "reservation_expires_at")
+    ordering = ("-id",)
+    paginator = EstimatedCountPaginator
+    show_full_result_count = False
+    show_facets = admin.ShowFacets.NEVER
+    list_select_related = ("product", "requested_by")
 
 
 @admin.register(MonitorRun)

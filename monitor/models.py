@@ -258,6 +258,9 @@ class Alert(models.Model):
         ordering = ("-created_at",)
         indexes = [
             models.Index(fields=("product", "-created_at")),
+            models.Index(fields=("status", "-id"), name="alert_status_id_idx"),
+            models.Index(fields=("source", "-id"), name="alert_source_id_idx"),
+            models.Index(fields=("reason", "-id"), name="alert_reason_id_idx"),
             models.Index(
                 fields=("product", "-created_at", "-id"),
                 condition=Q(status="sent"),

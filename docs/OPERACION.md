@@ -411,7 +411,7 @@ CRON_TZ=America/Mexico_City
 ```
 
 La limpieza conserva alertas `SENT` y `FAILED`. Configure
-`MONITOR_RETENTION_DAYS=30` y `MONITOR_RETENTION_BATCH_SIZE=1000`. Revise su
+`MONITOR_RETENTION_DAYS=7` y `MONITOR_RETENTION_BATCH_SIZE=1000`. Revise su
 salida con `tail -n 50 /var/log/goey-history-cleanup.log`.
 
 ## 12. Incidentes
