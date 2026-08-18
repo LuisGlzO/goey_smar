@@ -148,7 +148,7 @@ def _listing_available(listing: dict) -> bool | None:
     normalized = str(value).lower().replace("_", " ")
     if any(token in normalized for token in ("out of stock", "unavailable", "not available")):
         return False
-    if any(token in normalized for token in ("in stock", "available", "now")):
+    if normalized == "preorder" or any(token in normalized for token in ("in stock", "available", "now")):
         return True
     return None
 

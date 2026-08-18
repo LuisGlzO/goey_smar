@@ -11,6 +11,17 @@ class AmazonCreatorsApiTests(SimpleTestCase):
         amazon_creators._token_cache["access_token"] = ""
         amazon_creators._token_cache["expires_at"] = 0.0
 
+    def test_preorder_listing_is_available(self):
+        listing = {
+            "availability": {
+                "type": "PREORDER",
+                "message": "Este producto saldrá a la venta el 20 de octubre de 2026.",
+            },
+            "price": {"money": {"amount": 1199, "currency": "MXN"}},
+        }
+
+        self.assertIs(amazon_creators._listing_available(listing), True)
+
     @override_settings(
         AMAZON_CREATORS_API_CLIENT_ID="client",
         AMAZON_CREATORS_API_CLIENT_SECRET="secret",
