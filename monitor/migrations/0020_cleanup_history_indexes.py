@@ -22,20 +22,23 @@ class Migration(migrations.Migration):
     atomic = False
 
     dependencies = [
-        ("monitor", "0018_product_intentionally_not_in_cart"),
+        ("monitor", "0019_alert_admin_indexes"),
     ]
 
     operations = [
         AddIndexConcurrentlyIfPostgres(
             model_name="alert",
-            index=models.Index(fields=["status", "-id"], name="alert_status_id_idx"),
+            index=models.Index(
+                fields=["status", "created_at", "id"],
+                name="alert_cleanup_idx",
+            ),
         ),
         AddIndexConcurrentlyIfPostgres(
-            model_name="alert",
-            index=models.Index(fields=["source", "-id"], name="alert_source_id_idx"),
+            model_name="productcheck",
+            index=models.Index(fields=["checked_at", "id"], name="check_date_id_idx"),
         ),
         AddIndexConcurrentlyIfPostgres(
-            model_name="alert",
-            index=models.Index(fields=["reason", "-id"], name="alert_reason_id_idx"),
+            model_name="monitorrun",
+            index=models.Index(fields=["started_at", "id"], name="run_date_id_idx"),
         ),
     ]

@@ -184,6 +184,9 @@ class MonitorRun(models.Model):
     error = models.TextField(blank=True)
     performance = models.JSONField(default=dict, blank=True)
 
+    class Meta:
+        indexes = [models.Index(fields=("started_at", "id"), name="run_date_id_idx")]
+
 
 class ProductCheck(models.Model):
     class Availability(models.TextChoices):
@@ -208,6 +211,7 @@ class ProductCheck(models.Model):
     class Meta:
         ordering = ("-checked_at",)
         indexes = [
+            models.Index(fields=("checked_at", "id"), name="check_date_id_idx"),
             models.Index(fields=("product", "-checked_at")),
             models.Index(
                 fields=("product", "source", "-checked_at"),
@@ -258,6 +262,7 @@ class Alert(models.Model):
         ordering = ("-created_at",)
         indexes = [
             models.Index(fields=("product", "-created_at")),
+            models.Index(fields=("status", "created_at", "id"), name="alert_cleanup_idx"),
             models.Index(fields=("status", "-id"), name="alert_status_id_idx"),
             models.Index(fields=("source", "-id"), name="alert_source_id_idx"),
             models.Index(fields=("reason", "-id"), name="alert_reason_id_idx"),

@@ -15,15 +15,17 @@ PRESERVED_ALERT_STATUSES = (
 )
 
 
-def delete_in_batches(queryset, batch_size):
+def delete_in_batches(queryset, batch_size, *, order_by=("pk",), progress_callback=None):
     deleted = 0
     while True:
-        ids = list(queryset.order_by("pk").values_list("pk", flat=True)[:batch_size])
+        ids = list(queryset.order_by(*order_by).values_list("pk", flat=True)[:batch_size])
         if not ids:
             return deleted
         with transaction.atomic():
             queryset.model.objects.filter(pk__in=ids).delete()
         deleted += len(ids)
+        if progress_callback and deleted % (batch_size * 100) == 0:
+            progress_callback(deleted)
 
 
 class Command(BaseCommand):
@@ -81,12 +83,27 @@ class Command(BaseCommand):
             details="La reserva de envio expiro durante la limpieza de historial.",
             reservation_expires_at=None,
         )
-        skipped_count = delete_in_batches(old_skipped, batch_size)
+        def progress(label):
+            return lambda deleted: self.stdout.write(f"cleanup_progress {label}={deleted}")
+
+        skipped_count = delete_in_batches(
+            old_skipped,
+            batch_size,
+            order_by=("created_at", "pk"),
+            progress_callback=progress("skipped_alerts"),
+        )
         check_count = delete_in_batches(
             ProductCheck.objects.filter(checked_at__lt=cutoff, alerts__isnull=True),
             batch_size,
+            order_by=("checked_at", "pk"),
+            progress_callback=progress("product_checks"),
         )
-        snapshot_count = delete_in_batches(old_snapshots, batch_size)
+        snapshot_count = delete_in_batches(
+            old_snapshots,
+            batch_size,
+            order_by=("run__started_at", "pk"),
+            progress_callback=progress("cart_snapshots"),
+        )
         run_count = delete_in_batches(
             MonitorRun.objects.filter(
                 started_at__lt=cutoff,
@@ -94,6 +111,8 @@ class Command(BaseCommand):
                 cart_items__isnull=True,
             ),
             batch_size,
+            order_by=("started_at", "pk"),
+            progress_callback=progress("monitor_runs"),
         )
 
         self.stdout.write(self.style.SUCCESS(
