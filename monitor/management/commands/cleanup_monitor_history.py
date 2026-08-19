@@ -3,6 +3,7 @@ from datetime import timedelta
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from monitor.models import Alert, CartSnapshotItem, MonitorRun, ProductCheck
@@ -26,6 +27,45 @@ def delete_in_batches(queryset, batch_size, *, order_by=("pk",), progress_callba
         deleted += len(ids)
         if progress_callback and deleted % (batch_size * 100) == 0:
             progress_callback(deleted)
+
+
+def delete_orphan_checks_in_batches(cutoff, batch_size, *, progress_callback=None):
+    """Walk old checks once and avoid a full-table anti-join for every batch."""
+    deleted = 0
+    last_checked_at = None
+    last_pk = None
+    report_every = batch_size * 100
+    next_report = report_every
+
+    while True:
+        candidates = ProductCheck.objects.filter(checked_at__lt=cutoff)
+        if last_checked_at is not None:
+            candidates = candidates.filter(
+                Q(checked_at__gt=last_checked_at)
+                | Q(checked_at=last_checked_at, pk__gt=last_pk)
+            )
+        rows = list(
+            candidates.order_by("checked_at", "pk")
+            .values_list("checked_at", "pk")[:batch_size]
+        )
+        if not rows:
+            return deleted
+
+        candidate_ids = [pk for _, pk in rows]
+        protected_ids = set(
+            Alert.objects.filter(product_check_id__in=candidate_ids)
+            .values_list("product_check_id", flat=True)
+        )
+        deletable_ids = [pk for pk in candidate_ids if pk not in protected_ids]
+        if deletable_ids:
+            with transaction.atomic():
+                ProductCheck.objects.filter(pk__in=deletable_ids).delete()
+            deleted += len(deletable_ids)
+
+        last_checked_at, last_pk = rows[-1]
+        if progress_callback and deleted >= next_report:
+            progress_callback(deleted)
+            next_report = ((deleted // report_every) + 1) * report_every
 
 
 class Command(BaseCommand):
@@ -92,10 +132,9 @@ class Command(BaseCommand):
             order_by=("created_at", "pk"),
             progress_callback=progress("skipped_alerts"),
         )
-        check_count = delete_in_batches(
-            ProductCheck.objects.filter(checked_at__lt=cutoff, alerts__isnull=True),
+        check_count = delete_orphan_checks_in_batches(
+            cutoff,
             batch_size,
-            order_by=("checked_at", "pk"),
             progress_callback=progress("product_checks"),
         )
         snapshot_count = delete_in_batches(
