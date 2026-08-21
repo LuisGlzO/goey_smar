@@ -109,6 +109,38 @@ services:
         condition: service_started
     restart: unless-stopped
 
+  worker_discovery:
+    build: .
+    env_file: .env
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+    command: celery -A config worker -l INFO --concurrency=2 --prefetch-multiplier=1 -Q discovery -n discovery@%h
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: unless-stopped
+
+  worker_discovery_notifications:
+    build: .
+    env_file: .env
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+    command: celery -A config worker -l INFO --concurrency=1 --prefetch-multiplier=1 -Q discovery_notifications -n discovery_notifications@%h
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: unless-stopped
+
   beat:
     build: .
     env_file: .env

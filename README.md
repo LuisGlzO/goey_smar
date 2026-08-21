@@ -1,5 +1,8 @@
 # Goey SMAR
 
+La operación, seguridad, retención, canales privados y diagnóstico del módulo de descubrimiento
+se documentan en [docs/DESCUBRIMIENTO.md](docs/DESCUBRIMIENTO.md).
+
 MVP de monitoreo de productos guardados para más tarde en Amazon, con validación
 de precio, historial, reglas anti-spam y alertas automáticas a Telegram.
 

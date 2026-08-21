@@ -1,10 +1,25 @@
 import json
 
 from django.contrib import admin
+from django.contrib import messages
 from django.core.paginator import Paginator
 from django.utils.functional import cached_property
 
-from .models import Alert, CartSnapshotItem, MonitorRun, MonitorSettings, Product, ProductCheck, ProductGroup, ScraperAccount
+from .models import (
+    Alert,
+    CartSnapshotItem,
+    DiscoveryEvent,
+    DiscoveryNotification,
+    DiscoveryProduct,
+    DiscoveryRun,
+    DiscoverySource,
+    MonitorRun,
+    MonitorSettings,
+    Product,
+    ProductCheck,
+    ProductGroup,
+    ScraperAccount,
+)
 
 
 class EstimatedCountPaginator(Paginator):
@@ -122,3 +137,137 @@ class MonitorSettingsAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         return False
+
+
+@admin.register(DiscoverySource)
+class DiscoverySourceAdmin(admin.ModelAdmin):
+    list_display = (
+        "name", "source_type", "is_active", "baseline_established", "last_status",
+        "price_drop_percent", "interval_minutes", "last_run", "last_successful_run", "updated_at",
+    )
+    list_filter = ("source_type", "is_active", "baseline_established", "last_status")
+    search_fields = ("name", "url")
+    readonly_fields = (
+        "baseline_established", "baseline_established_at", "last_run",
+        "last_successful_run", "last_status", "created_at", "updated_at",
+    )
+    fields = (
+        "name", "url", "source_type", "is_active", "price_drop_percent",
+        "interval_minutes", "configuration", "next_run_at", "baseline_established",
+        "baseline_established_at", "last_status", "last_run", "last_successful_run",
+        "created_at", "updated_at",
+    )
+    actions = ("run_diagnostic", "activate_sources", "deactivate_sources")
+
+    @admin.action(description="Ejecutar diagnóstico (no modifica el baseline)")
+    def run_diagnostic(self, request, queryset):
+        from django.conf import settings
+        from .tasks import run_discovery_source
+
+        queued = 0
+        for source in queryset:
+            run_discovery_source.apply_async(
+                args=(source.pk,), kwargs={"diagnostic": True},
+                queue=settings.DISCOVERY_QUEUE, expires=settings.DISCOVERY_TASK_EXPIRES_SECONDS,
+            )
+            queued += 1
+        self.message_user(
+            request,
+            f"Diagnósticos encolados: {queued}. No modificarán baseline, productos, eventos ni notificaciones.",
+            messages.SUCCESS,
+        )
+
+    @admin.action(description="Activar fuentes seleccionadas")
+    def activate_sources(self, request, queryset):
+        self.message_user(request, f"Fuentes activadas: {queryset.update(is_active=True)}.")
+
+    @admin.action(description="Desactivar fuentes seleccionadas")
+    def deactivate_sources(self, request, queryset):
+        self.message_user(request, f"Fuentes desactivadas: {queryset.update(is_active=False)}.")
+
+
+@admin.register(DiscoveryProduct)
+class DiscoveryProductAdmin(admin.ModelAdmin):
+    list_display = (
+        "external_id", "name", "source", "current_price", "is_present", "position", "last_seen_at",
+    )
+    list_filter = ("source__source_type", "is_present", "source")
+    search_fields = ("external_id", "name", "source__name")
+    readonly_fields = tuple(field.name for field in DiscoveryProduct._meta.fields)
+    list_select_related = ("source",)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return request.method in ("GET", "HEAD")
+
+
+@admin.register(DiscoveryRun)
+class DiscoveryRunAdmin(admin.ModelAdmin):
+    list_display = (
+        "started_at", "source", "status", "pages_found", "products_found",
+        "is_diagnostic", "events_created", "notifications_created", "finished_at",
+    )
+    list_filter = ("status", "is_diagnostic", "source__source_type", "source")
+    search_fields = ("source__name", "error")
+    readonly_fields = tuple(field.name for field in DiscoveryRun._meta.fields)
+    list_select_related = ("source",)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return request.method in ("GET", "HEAD")
+
+
+@admin.register(DiscoveryEvent)
+class DiscoveryEventAdmin(admin.ModelAdmin):
+    list_display = ("created_at", "event_type", "product", "source_name", "run")
+    list_filter = ("event_type", "run__source__source_type", "run__source")
+    search_fields = ("product__external_id", "product__name", "run__source__name")
+    readonly_fields = tuple(field.name for field in DiscoveryEvent._meta.fields)
+    list_select_related = ("product", "run", "run__source")
+
+    @admin.display(description="Fuente", ordering="run__source__name")
+    def source_name(self, obj):
+        return obj.run.source.name
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return request.method in ("GET", "HEAD")
+
+
+@admin.register(DiscoveryNotification)
+class DiscoveryNotificationAdmin(admin.ModelAdmin):
+    list_display = ("created_at", "status", "event", "source_name", "sent_at", "failed_at")
+    list_filter = ("status", "event__run__source__source_type", "event__run__source")
+    search_fields = (
+        "event__product__external_id", "event__product__name", "event__run__source__name",
+    )
+    readonly_fields = tuple(field.name for field in DiscoveryNotification._meta.fields)
+    list_select_related = ("event", "event__product", "event__run", "event__run__source")
+
+    @admin.display(description="Fuente", ordering="event__run__source__name")
+    def source_name(self, obj):
+        return obj.event.run.source.name
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return request.method in ("GET", "HEAD")

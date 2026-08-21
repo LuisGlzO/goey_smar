@@ -1,6 +1,7 @@
 from django.db import models
 from django.db.models import Q
-from django.core.validators import RegexValidator
+from django.core.exceptions import ValidationError
+from django.core.validators import MaxValueValidator, MinValueValidator, RegexValidator
 
 
 class ObservationSource(models.TextChoices):
@@ -278,3 +279,245 @@ class Alert(models.Model):
             ),
         ]
         permissions = [("send_manual_alert", "Puede enviar alertas manuales")]
+
+
+class DiscoverySource(models.Model):
+    class SourceType(models.TextChoices):
+        AMAZON_TOP_100 = "amazon_top_100", "Amazon Top 100"
+        AMAZON_NEWEST = "amazon_newest", "Amazon Newest"
+        AMAZON_TRACKERS = "amazon_trackers", "Amazon Trackers"
+        MERCADO_LIBRE_SELLER = "mercado_libre_seller", "Mercado Libre Seller"
+
+    PRICE_DROP_SOURCE_TYPES = {SourceType.AMAZON_TOP_100, SourceType.MERCADO_LIBRE_SELLER}
+
+    name = models.CharField(max_length=150)
+    url = models.URLField(max_length=2000)
+    source_type = models.CharField(max_length=30, choices=SourceType.choices)
+    is_active = models.BooleanField(default=True)
+    interval_minutes = models.PositiveIntegerField(default=30)
+    next_run_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    dispatch_reserved_at = models.DateTimeField(null=True, blank=True)
+    price_drop_percent = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(0), MaxValueValidator(100)],
+    )
+    configuration = models.JSONField(default=dict, blank=True)
+    baseline_established = models.BooleanField(default=False)
+    baseline_established_at = models.DateTimeField(null=True, blank=True)
+    last_run = models.ForeignKey(
+        "DiscoveryRun", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    last_successful_run = models.ForeignKey(
+        "DiscoveryRun", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    last_status = models.CharField(max_length=12, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("source_type", "name", "pk")
+        verbose_name = "Fuente de descubrimiento"
+        verbose_name_plural = "Fuentes de descubrimiento"
+
+    def __str__(self):
+        return f"{self.get_source_type_display()} - {self.name}"
+
+    def clean(self):
+        super().clean()
+        from .amazon_discovery import AmazonDiscoveryConfigurationError, normalize_amazon_url
+        from .mercado_libre_discovery import (
+            MercadoLibreConfigurationError,
+            normalize_mercado_libre_url,
+        )
+
+        if self.interval_minutes < 1:
+            raise ValidationError({"interval_minutes": "El intervalo debe ser mayor que cero."})
+        if self.interval_minutes > 43200:
+            raise ValidationError({"interval_minutes": "El intervalo no puede superar 30 días."})
+        if self.source_type in self.PRICE_DROP_SOURCE_TYPES and self.price_drop_percent is None:
+            raise ValidationError({"price_drop_percent": "Este tipo de fuente requiere un porcentaje."})
+        if not isinstance(self.configuration, dict):
+            raise ValidationError({"configuration": "La configuración debe ser un objeto JSON."})
+        unknown = set(self.configuration) - {"max_pages", "timeout_seconds"}
+        if unknown:
+            raise ValidationError({
+                "configuration": f"Opciones no permitidas: {', '.join(sorted(unknown))}."
+            })
+        limits = {"max_pages": (1, 100), "timeout_seconds": (1, 60)}
+        for key, (minimum, maximum) in limits.items():
+            if key not in self.configuration:
+                continue
+            value = self.configuration[key]
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValidationError({"configuration": f"{key} debe ser numérico."})
+            if not minimum <= value <= maximum:
+                raise ValidationError({
+                    "configuration": f"{key} debe estar entre {minimum} y {maximum}."
+                })
+        try:
+            if self.source_type == self.SourceType.MERCADO_LIBRE_SELLER:
+                self.url = normalize_mercado_libre_url(self.url)
+            elif self.source_type in {
+                self.SourceType.AMAZON_TOP_100,
+                self.SourceType.AMAZON_NEWEST,
+                self.SourceType.AMAZON_TRACKERS,
+            }:
+                self.url = normalize_amazon_url(self.url)
+            else:
+                raise ValidationError({"source_type": "Tipo de fuente no soportado."})
+        except (AmazonDiscoveryConfigurationError, MercadoLibreConfigurationError) as exc:
+            raise ValidationError({"url": str(exc)}) from exc
+
+    def save(self, *args, **kwargs):
+        self.name = self.name.strip()
+        super().save(*args, **kwargs)
+
+
+class DiscoveryRun(models.Model):
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pendiente"
+        RUNNING = "running", "Ejecutándose"
+        SUCCESS = "success", "Exitosa"
+        INCOMPLETE = "incomplete", "Incompleta"
+        FAILED = "failed", "Fallida"
+        SKIPPED = "skipped", "Omitida"
+
+    source = models.ForeignKey(DiscoverySource, on_delete=models.CASCADE, related_name="runs")
+    status = models.CharField(max_length=12, choices=Status.choices, default=Status.PENDING)
+    started_at = models.DateTimeField(auto_now_add=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    error = models.TextField(blank=True)
+    pages_found = models.PositiveIntegerField(default=0)
+    products_found = models.PositiveIntegerField(default=0)
+    known_products = models.PositiveIntegerField(default=0)
+    new_products = models.PositiveIntegerField(default=0)
+    exits = models.PositiveIntegerField(default=0)
+    reentries = models.PositiveIntegerField(default=0)
+    price_drops = models.PositiveIntegerField(default=0)
+    events_created = models.PositiveIntegerField(default=0)
+    notifications_created = models.PositiveIntegerField(default=0)
+    is_diagnostic = models.BooleanField(
+        default=False,
+        help_text="La revisión solo inspeccionó la fuente; no modificó baseline, productos ni eventos.",
+    )
+    issues = models.JSONField(default=list, blank=True)
+
+    class Meta:
+        ordering = ("-started_at", "-pk")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("source",),
+                condition=Q(status="running"),
+                name="unique_running_discovery_source",
+            )
+        ]
+        indexes = [
+            models.Index(fields=("source", "-started_at"), name="discovery_run_source_idx"),
+            models.Index(fields=("status", "-started_at"), name="discovery_run_status_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.source} - {self.get_status_display()} - {self.started_at:%Y-%m-%d %H:%M}"
+
+
+class DiscoveryProduct(models.Model):
+    source = models.ForeignKey(DiscoverySource, on_delete=models.CASCADE, related_name="products")
+    external_id = models.CharField(max_length=120)
+    name = models.CharField(max_length=500)
+    url = models.URLField(max_length=2000, blank=True)
+    current_price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    notification_reference_price = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True
+    )
+    is_present = models.BooleanField(default=True)
+    position = models.PositiveIntegerField(null=True, blank=True)
+    first_seen_at = models.DateTimeField()
+    last_seen_at = models.DateTimeField()
+    last_entered_at = models.DateTimeField()
+    last_exited_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ("source", "external_id")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("source", "external_id"), name="unique_discovery_product_source"
+            )
+        ]
+        indexes = [
+            models.Index(fields=("source", "is_present"), name="discovery_present_idx"),
+            models.Index(fields=("source", "-last_seen_at"), name="discovery_last_seen_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.external_id} - {self.name}"
+
+    def save(self, *args, **kwargs):
+        self.external_id = self.external_id.strip().upper()
+        self.name = self.name.strip()
+        super().save(*args, **kwargs)
+
+
+class DiscoveryEvent(models.Model):
+    class EventType(models.TextChoices):
+        BASELINE = "baseline", "Baseline"
+        NEW = "new", "Producto nuevo"
+        EXIT = "exit", "Salida"
+        REENTRY = "reentry", "Reingreso"
+        PRICE_DROP = "price_drop", "Reducción de precio"
+
+    run = models.ForeignKey(DiscoveryRun, on_delete=models.CASCADE, related_name="events")
+    product = models.ForeignKey(DiscoveryProduct, on_delete=models.CASCADE, related_name="events")
+    event_type = models.CharField(max_length=12, choices=EventType.choices)
+    created_at = models.DateTimeField(auto_now_add=True)
+    previous_price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    new_price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    previous_position = models.PositiveIntegerField(null=True, blank=True)
+    new_position = models.PositiveIntegerField(null=True, blank=True)
+    data = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        ordering = ("-created_at", "-pk")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("run", "product", "event_type"), name="unique_discovery_event_per_run"
+            )
+        ]
+        indexes = [
+            models.Index(fields=("event_type", "-created_at"), name="discovery_event_type_idx"),
+            models.Index(fields=("run", "-created_at"), name="discovery_event_run_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.get_event_type_display()} - {self.product}"
+
+
+class DiscoveryNotification(models.Model):
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pendiente"
+        PROCESSING = "processing", "Procesando"
+        SENT = "sent", "Enviada"
+        FAILED = "failed", "Fallida"
+
+    event = models.OneToOneField(
+        DiscoveryEvent, on_delete=models.CASCADE, related_name="notification"
+    )
+    status = models.CharField(max_length=12, choices=Status.choices, default=Status.PENDING)
+    payload = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    delivery_started_at = models.DateTimeField(null=True, blank=True)
+    sent_at = models.DateTimeField(null=True, blank=True)
+    failed_at = models.DateTimeField(null=True, blank=True)
+    error = models.TextField(blank=True)
+    telegram_message_id = models.CharField(max_length=100, blank=True)
+
+    class Meta:
+        ordering = ("-created_at", "-pk")
+        indexes = [
+            models.Index(fields=("status", "-created_at"), name="discovery_notif_status_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.event} - {self.get_status_display()}"

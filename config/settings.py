@@ -97,7 +97,35 @@ CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", CELERY_BROKER_URL)
 CELERY_TASK_ROUTES = {
     "monitor.tasks.monitor_saved_items": {"queue": "scraper_amazon_a"},
     "monitor.tasks.monitor_creators_api": {"queue": "creators_api"},
+    "monitor.tasks.dispatch_due_discovery_sources": {"queue": "discovery"},
+    "monitor.tasks.run_discovery_source": {"queue": "discovery"},
+    "monitor.tasks.send_discovery_notification": {"queue": "discovery_notifications"},
+    "monitor.tasks.cleanup_discovery_history": {"queue": "discovery"},
 }
+DISCOVERY_QUEUE = os.getenv("DISCOVERY_QUEUE", "discovery")
+DISCOVERY_NOTIFICATIONS_QUEUE = os.getenv(
+    "DISCOVERY_NOTIFICATIONS_QUEUE", "discovery_notifications"
+)
+DISCOVERY_DISPATCH_INTERVAL_SECONDS = int(os.getenv("DISCOVERY_DISPATCH_INTERVAL_SECONDS", "60"))
+DISCOVERY_DISPATCH_BATCH_SIZE = int(os.getenv("DISCOVERY_DISPATCH_BATCH_SIZE", "100"))
+DISCOVERY_STAGGER_SECONDS = int(os.getenv("DISCOVERY_STAGGER_SECONDS", "5"))
+DISCOVERY_TASK_EXPIRES_SECONDS = int(os.getenv("DISCOVERY_TASK_EXPIRES_SECONDS", "900"))
+DISCOVERY_NOTIFICATION_EXPIRES_SECONDS = int(
+    os.getenv("DISCOVERY_NOTIFICATION_EXPIRES_SECONDS", "900")
+)
+DISCOVERY_RETRY_DELAY_SECONDS = int(os.getenv("DISCOVERY_RETRY_DELAY_SECONDS", "30"))
+DISCOVERY_RETENTION_DAYS = int(os.getenv("DISCOVERY_RETENTION_DAYS", "90"))
+DISCOVERY_RETENTION_BATCH_SIZE = int(os.getenv("DISCOVERY_RETENTION_BATCH_SIZE", "5000"))
+if DISCOVERY_RETENTION_DAYS <= 0 or DISCOVERY_RETENTION_BATCH_SIZE <= 0:
+    raise ImproperlyConfigured("La retención y el lote de descubrimiento deben ser mayores que cero.")
+AMAZON_DISCOVERY_MAX_PAGES = int(os.getenv("AMAZON_DISCOVERY_MAX_PAGES", "20"))
+AMAZON_DISCOVERY_TIMEOUT_SECONDS = float(os.getenv("AMAZON_DISCOVERY_TIMEOUT_SECONDS", "20"))
+MERCADOLIBRE_DISCOVERY_MAX_PAGES = int(
+    os.getenv("MERCADOLIBRE_DISCOVERY_MAX_PAGES", "50")
+)
+MERCADOLIBRE_DISCOVERY_TIMEOUT_SECONDS = float(
+    os.getenv("MERCADOLIBRE_DISCOVERY_TIMEOUT_SECONDS", "20")
+)
 MONITOR_INTERVAL_SECONDS = int(os.getenv("MONITOR_INTERVAL_SECONDS", "120"))
 MONITOR_TASK_TIME_LIMIT_SECONDS = int(os.getenv("MONITOR_TASK_TIME_LIMIT_SECONDS", "240"))
 MONITOR_RUNNING_STALE_MINUTES = int(os.getenv("MONITOR_RUNNING_STALE_MINUTES", "10"))
@@ -164,6 +192,19 @@ _validate_distinct_periodic_phases((
 ))
 
 CELERY_BEAT_SCHEDULE = {
+    "cleanup-discovery-history": {
+        "task": "monitor.tasks.cleanup_discovery_history",
+        "schedule": 86400,
+        "options": {"queue": DISCOVERY_QUEUE, "expires": 3600},
+    },
+    "dispatch-due-discovery-sources": {
+        "task": "monitor.tasks.dispatch_due_discovery_sources",
+        "schedule": DISCOVERY_DISPATCH_INTERVAL_SECONDS,
+        "options": {
+            "queue": DISCOVERY_QUEUE,
+            "expires": DISCOVERY_DISPATCH_INTERVAL_SECONDS,
+        },
+    },
     "monitor-saved-items-amazon-a": {
         "task": "monitor.tasks.monitor_saved_items",
         "schedule": AMAZON_SCRAPER_A_INTERVAL_SECONDS,
@@ -239,6 +280,11 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 TELEGRAM_ERROR_BOT_TOKEN = os.getenv("TELEGRAM_ERROR_BOT_TOKEN", "")
 TELEGRAM_ERROR_CHAT_ID = os.getenv("TELEGRAM_ERROR_CHAT_ID", "")
+TELEGRAM_DISCOVERY_BOT_TOKEN = os.getenv("TELEGRAM_DISCOVERY_BOT_TOKEN", "")
+TELEGRAM_TOP100_CHANNEL_ID = os.getenv("TELEGRAM_TOP100_CHANNEL_ID", "")
+TELEGRAM_NEWEST_CHANNEL_ID = os.getenv("TELEGRAM_NEWEST_CHANNEL_ID", "")
+TELEGRAM_TRACKERS_CHANNEL_ID = os.getenv("TELEGRAM_TRACKERS_CHANNEL_ID", "")
+TELEGRAM_MERCADOLIBRE_CHANNEL_ID = os.getenv("TELEGRAM_MERCADOLIBRE_CHANNEL_ID", "")
 
 EMAIL_BACKEND = os.getenv("EMAIL_BACKEND", "django.core.mail.backends.smtp.EmailBackend")
 EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.gmail.com")
