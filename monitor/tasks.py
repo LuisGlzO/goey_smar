@@ -16,6 +16,12 @@ from .services import run_creators_api_monitor, run_monitor
 logger = logging.getLogger(__name__)
 
 
+def discovery_queue_for_source(source):
+    if source.source_type == DiscoverySource.SourceType.MERCADO_LIBRE_SELLER:
+        return settings.MERCADOLIBRE_DISCOVERY_QUEUE
+    return settings.DISCOVERY_QUEUE
+
+
 @shared_task(
     name="monitor.tasks.monitor_saved_items",
     soft_time_limit=max(settings.MONITOR_TASK_TIME_LIMIT_SECONDS - 15, 1),
@@ -58,7 +64,7 @@ def dispatch_due_discovery_sources():
         try:
             run_discovery_source.apply_async(
                 args=(source.pk,),
-                queue=settings.DISCOVERY_QUEUE,
+                queue=discovery_queue_for_source(source),
                 countdown=index * settings.DISCOVERY_STAGGER_SECONDS,
                 expires=settings.DISCOVERY_TASK_EXPIRES_SECONDS,
             )

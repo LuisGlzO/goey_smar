@@ -10,4 +10,5 @@ def collect_amazon_trackers(url, *, max_pages=20, timeout=20, session=None):
         max_pages=max_pages,
         timeout=timeout,
         session=session,
+        page_limit_is_complete=True,
     )

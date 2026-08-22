@@ -48,9 +48,10 @@ class AmazonTrackersIntegrationTests(TestCase):
             source_type=DiscoverySource.SourceType.AMAZON_TRACKERS,
         )
 
+    @override_settings(AMAZON_TRACKERS_DISCOVERY_MAX_PAGES=3)
     def test_collector_reuses_search_extractor_and_source_options(self):
         source = self.source()
-        source.configuration = {"max_pages": 3, "timeout_seconds": 7}
+        source.configuration = {"timeout_seconds": 7}
         with patch("monitor.discovery_collectors.collect_amazon_trackers") as collect:
             collect.return_value.as_dict.return_value = {
                 "items": [], "pages_found": 1, "is_complete": True, "issues": []

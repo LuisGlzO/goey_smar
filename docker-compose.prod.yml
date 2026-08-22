@@ -125,6 +125,25 @@ services:
         condition: service_started
     restart: unless-stopped
 
+  worker_discovery_mercadolibre:
+    build: .
+    env_file: .env
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      MERCADOLIBRE_DISCOVERY_PROFILE_DIR: /app/mercadolibre-discovery-profile
+    command: celery -A config worker -l INFO --concurrency=1 --prefetch-multiplier=1 --max-tasks-per-child=1 -Q ${MERCADOLIBRE_DISCOVERY_QUEUE:-discovery_mercadolibre} -n discovery_mercadolibre@%h
+    volumes:
+      - ./.mercadolibre-discovery-profile:/app/mercadolibre-discovery-profile
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: unless-stopped
+
   worker_discovery_notifications:
     build: .
     env_file: .env

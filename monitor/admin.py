@@ -162,13 +162,14 @@ class DiscoverySourceAdmin(admin.ModelAdmin):
     @admin.action(description="Ejecutar diagnóstico (no modifica el baseline)")
     def run_diagnostic(self, request, queryset):
         from django.conf import settings
-        from .tasks import run_discovery_source
+        from .tasks import discovery_queue_for_source, run_discovery_source
 
         queued = 0
         for source in queryset:
             run_discovery_source.apply_async(
                 args=(source.pk,), kwargs={"diagnostic": True},
-                queue=settings.DISCOVERY_QUEUE, expires=settings.DISCOVERY_TASK_EXPIRES_SECONDS,
+                queue=discovery_queue_for_source(source),
+                expires=settings.DISCOVERY_TASK_EXPIRES_SECONDS,
             )
             queued += 1
         self.message_user(

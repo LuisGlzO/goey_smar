@@ -55,6 +55,20 @@ class DiscoveryOrchestrationTests(TestCase):
         self.assertEqual(dispatch_due_discovery_sources(), 0)
         publish.assert_not_called()
 
+    @override_settings(MERCADOLIBRE_DISCOVERY_QUEUE="discovery_mercadolibre")
+    @patch("monitor.tasks.run_discovery_source.apply_async")
+    def test_dispatches_mercado_libre_to_its_serial_queue(self, publish):
+        self.source(
+            "Seller",
+            source_type=DiscoverySource.SourceType.MERCADO_LIBRE_SELLER,
+            url="https://listado.mercadolibre.com.mx/pagina/tieronezone/",
+        )
+
+        self.assertEqual(dispatch_due_discovery_sources(), 1)
+
+        self.assertEqual(publish.call_args.kwargs["queue"], "discovery_mercadolibre")
+
+
     @patch("monitor.tasks.send_discovery_notification.apply_async")
     @patch("monitor.tasks.collect_discovery_source")
     def test_source_task_uses_fake_collector_and_enqueues_its_own_notifications(

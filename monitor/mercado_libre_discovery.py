@@ -6,9 +6,11 @@ import re
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from html.parser import HTMLParser
+from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
 import requests
+from django.conf import settings
 
 
 ITEM_ID_RE = re.compile(r"^MLM\d+$")
@@ -21,8 +23,11 @@ BLOCK_MARKERS = (
 )
 CAPTCHA_MARKERS = ("captcha", "recaptcha", "no soy un robot")
 ERROR_MARKERS = ("algo salió mal", "something went wrong", "service unavailable")
+CAPTCHA_PATHS = ("/captcha/", "/gz/account-verification")
 ALLOWED_HOST_SUFFIX = "mercadolibre.com.mx"
 VOID_TAGS = {"area", "base", "br", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"}
+CHROMIUM_PROFILE_LOCK_FILES = ("SingletonCookie", "SingletonLock", "SingletonSocket")
+MERCADOLIBRE_PRODUCT_SELECTOR = "li.ui-search-layout__item"
 
 
 class MercadoLibreConfigurationError(ValueError):
@@ -199,28 +204,60 @@ def parse_mercado_libre_page(html, page_url):
     return items, next_url, parser.product_hints, malformed
 
 
-def _page_problem(response):
-    body = (response.text or "").lower()
-    if response.status_code >= 500:
+def _page_problem(status_code, html, page_url=""):
+    body = (html or "").lower()
+    path = urlsplit(page_url).path.lower()
+    if any(marker in path for marker in CAPTCHA_PATHS) or "suspicious-traffic-frontend" in body:
+        return "captcha"
+    if status_code >= 500:
         return "http_error"
-    if response.status_code in (401, 403, 429) or any(marker in body for marker in BLOCK_MARKERS):
+    if status_code in (401, 403, 429) or any(marker in body for marker in BLOCK_MARKERS):
         return "blocked"
     if any(marker in body for marker in CAPTCHA_MARKERS):
         return "captcha"
-    if response.status_code >= 400 or any(marker in body for marker in ERROR_MARKERS):
+    has_product_cards = "ui-search-layout__item" in body
+    if status_code >= 400 or (
+        not has_product_cards and any(marker in body for marker in ERROR_MARKERS)
+    ):
         return "error_page"
     if not body.strip():
         return "empty_page"
     return None
 
 
-def navigate_mercado_libre_public(url, *, max_pages=50, timeout=20, session=None):
-    if not isinstance(max_pages, int) or isinstance(max_pages, bool) or max_pages < 1:
-        raise MercadoLibreConfigurationError("max_pages debe ser un entero positivo.")
-    if not isinstance(timeout, (int, float)) or isinstance(timeout, bool) or timeout <= 0:
-        raise MercadoLibreConfigurationError("timeout debe ser positivo.")
-    current = normalize_mercado_libre_url(url)
-    client = session or requests.Session()
+def cleanup_mercado_libre_profile_locks(profile_dir):
+    profile_path = Path(profile_dir)
+    profile_path.mkdir(parents=True, exist_ok=True)
+    for filename in CHROMIUM_PROFILE_LOCK_FILES:
+        try:
+            (profile_path / filename).unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def chromium_user_agent(playwright):
+    probe = playwright.chromium.launch(headless=True)
+    try:
+        version = probe.version
+    finally:
+        probe.close()
+    return (
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+        f"(KHTML, like Gecko) Chrome/{version} Safari/537.36"
+    )
+
+
+def wait_for_mercado_libre_listing(page, timeout_ms):
+    """Wait for the client-rendered seller cards instead of guessing a delay."""
+    page.wait_for_selector(
+        MERCADOLIBRE_PRODUCT_SELECTOR,
+        state="attached",
+        timeout=timeout_ms,
+    )
+
+
+def _review_pages(initial_url, max_pages, load_page):
+    current = initial_url
     visited, products, issues = set(), {}, []
     pages_found = 0
     while current:
@@ -232,46 +269,30 @@ def navigate_mercado_libre_public(url, *, max_pages=50, timeout=20, session=None
             break
         visited.add(current)
         try:
-            response = client.get(
-                current,
-                timeout=timeout,
-                allow_redirects=False,
-                headers={
-                    "User-Agent": (
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                        "AppleWebKit/537.36 Chrome/131.0 Safari/537.36"
-                    ),
-                    "Accept-Language": "es-MX,es;q=0.9",
-                },
-            )
-        except requests.Timeout:
+            status_code, html, final_url = load_page(current)
+        except TimeoutError:
             issues.append("timeout")
             break
-        except requests.RequestException:
+        except MercadoLibreConfigurationError:
+            issues.append("invalid_redirect")
+            break
+        except OSError:
             issues.append("network_error")
             break
-        if response.is_redirect:
-            location = response.headers.get("Location")
-            if not location:
-                issues.append("invalid_redirect")
-                break
-            try:
-                redirected = normalize_mercado_libre_url(location, base_url=current)
-            except MercadoLibreConfigurationError:
-                issues.append("invalid_redirect")
-                break
-            if redirected in visited:
+        final_url = normalize_mercado_libre_url(final_url)
+        if final_url != current:
+            if final_url in visited:
                 issues.append("redirect_cycle")
                 break
-            current = redirected
-            continue
+            visited.add(final_url)
+            current = final_url
         pages_found += 1
-        problem = _page_problem(response)
+        problem = _page_problem(status_code, html, current)
         if problem:
             issues.append(problem)
             break
         try:
-            items, next_url, hints, malformed = parse_mercado_libre_page(response.text, current)
+            items, next_url, hints, malformed = parse_mercado_libre_page(html, current)
         except (MercadoLibreConfigurationError, ValueError):
             issues.append("unexpected_structure")
             break
@@ -286,3 +307,94 @@ def navigate_mercado_libre_public(url, *, max_pages=50, timeout=20, session=None
     return MercadoLibreReview(
         tuple(products.values()), pages_found, not issues, tuple(dict.fromkeys(issues))
     )
+
+
+def _navigate_with_http_session(url, *, max_pages, timeout, session):
+    """Test seam for deterministic fixtures; production uses persistent Chromium."""
+    def load_page(current):
+        try:
+            response = session.get(
+                current,
+                timeout=timeout,
+                allow_redirects=False,
+                headers={
+                    "User-Agent": (
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                        "AppleWebKit/537.36 Chrome/131.0 Safari/537.36"
+                    ),
+                    "Accept-Language": "es-MX,es;q=0.9",
+                },
+            )
+        except requests.Timeout as exc:
+            raise TimeoutError from exc
+        except requests.RequestException as exc:
+            raise OSError from exc
+        if response.is_redirect:
+            location = response.headers.get("Location")
+            if not location:
+                raise MercadoLibreConfigurationError("Redirección sin destino.")
+            return load_page(normalize_mercado_libre_url(location, base_url=current))
+        return response.status_code, response.text, current
+
+    return _review_pages(normalize_mercado_libre_url(url), max_pages, load_page)
+
+
+def _navigate_with_playwright(url, *, max_pages, timeout):
+    from playwright.sync_api import Error as PlaywrightError
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+    from playwright.sync_api import sync_playwright
+
+    timeout_ms = int(timeout * 1000)
+    profile_dir = settings.MERCADOLIBRE_DISCOVERY_PROFILE_DIR
+    cleanup_mercado_libre_profile_locks(profile_dir)
+    with sync_playwright() as playwright:
+        context = playwright.chromium.launch_persistent_context(
+            profile_dir,
+            headless=settings.MERCADOLIBRE_DISCOVERY_HEADLESS,
+            locale="es-MX",
+            timezone_id="America/Mexico_City",
+            viewport={"width": 1440, "height": 1000},
+            user_agent=chromium_user_agent(playwright),
+            timeout=settings.MERCADOLIBRE_DISCOVERY_BROWSER_LAUNCH_TIMEOUT_SECONDS * 1000,
+            args=(
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+                "--no-zygote",
+                "--disable-blink-features=AutomationControlled",
+            ),
+            extra_http_headers={"Accept-Language": "es-MX,es;q=0.9,en;q=0.8"},
+        )
+        page = context.pages[0] if context.pages else context.new_page()
+
+        def load_page(current):
+            try:
+                response = page.goto(current, wait_until="domcontentloaded", timeout=timeout_ms)
+                try:
+                    wait_for_mercado_libre_listing(page, timeout_ms)
+                except PlaywrightTimeoutError:
+                    # Preserve the returned page so _review_pages can distinguish
+                    # captcha, HTTP errors and legitimately empty/changed content.
+                    pass
+                final_url = normalize_mercado_libre_url(page.url)
+                return response.status if response else 200, page.content(), final_url
+            except PlaywrightTimeoutError as exc:
+                raise TimeoutError from exc
+            except PlaywrightError as exc:
+                raise OSError from exc
+
+        try:
+            return _review_pages(normalize_mercado_libre_url(url), max_pages, load_page)
+        finally:
+            context.close()
+
+
+def navigate_mercado_libre_public(url, *, max_pages=50, timeout=20, session=None):
+    if not isinstance(max_pages, int) or isinstance(max_pages, bool) or max_pages < 1:
+        raise MercadoLibreConfigurationError("max_pages debe ser un entero positivo.")
+    if not isinstance(timeout, (int, float)) or isinstance(timeout, bool) or timeout <= 0:
+        raise MercadoLibreConfigurationError("timeout debe ser positivo.")
+    if session is not None:
+        return _navigate_with_http_session(
+            url, max_pages=max_pages, timeout=timeout, session=session
+        )
+    return _navigate_with_playwright(url, max_pages=max_pages, timeout=timeout)

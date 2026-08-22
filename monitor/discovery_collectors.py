@@ -23,19 +23,28 @@ def collect_discovery_source(source):
             ),
         ).as_dict()
     options = {
-        "max_pages": configuration.get(
-            "max_pages", getattr(settings, "AMAZON_DISCOVERY_MAX_PAGES", 20)
-        ),
         "timeout": configuration.get(
             "timeout_seconds", getattr(settings, "AMAZON_DISCOVERY_TIMEOUT_SECONDS", 20)
         ),
     }
     if source.source_type == DiscoverySource.SourceType.AMAZON_TOP_100:
-        return collect_amazon_top100(source.url, **options).as_dict()
+        return collect_amazon_top100(
+            source.url,
+            max_pages=getattr(settings, "AMAZON_TOP100_DISCOVERY_MAX_PAGES", 20),
+            **options,
+        ).as_dict()
     if source.source_type == DiscoverySource.SourceType.AMAZON_NEWEST:
-        return collect_amazon_newest(source.url, **options).as_dict()
+        return collect_amazon_newest(
+            source.url,
+            max_pages=getattr(settings, "AMAZON_NEWEST_DISCOVERY_MAX_PAGES", 20),
+            **options,
+        ).as_dict()
     if source.source_type == DiscoverySource.SourceType.AMAZON_TRACKERS:
-        return collect_amazon_trackers(source.url, **options).as_dict()
+        return collect_amazon_trackers(
+            source.url,
+            max_pages=getattr(settings, "AMAZON_TRACKERS_DISCOVERY_MAX_PAGES", 20),
+            **options,
+        ).as_dict()
     raise NotImplementedError(
         f"No hay recolector habilitado todavía para {source.get_source_type_display()}."
     )

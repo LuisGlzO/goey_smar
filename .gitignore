@@ -3,6 +3,7 @@
 goey_smar_env/
 .amazon-profile/
 .amazon-profile-amazon-b/
+.mercadolibre-discovery-profile/
 amazon-profile/
 .docker-config/
 db.sqlite3

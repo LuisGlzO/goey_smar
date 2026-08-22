@@ -341,6 +341,12 @@ class DiscoverySource(models.Model):
             raise ValidationError({"price_drop_percent": "Este tipo de fuente requiere un porcentaje."})
         if not isinstance(self.configuration, dict):
             raise ValidationError({"configuration": "La configuración debe ser un objeto JSON."})
+        if self.source_type != self.SourceType.MERCADO_LIBRE_SELLER and "max_pages" in self.configuration:
+            raise ValidationError({
+                "configuration": (
+                    "max_pages se configura por tipo de fuente mediante variables de entorno."
+                )
+            })
         unknown = set(self.configuration) - {"max_pages", "timeout_seconds"}
         if unknown:
             raise ValidationError({
